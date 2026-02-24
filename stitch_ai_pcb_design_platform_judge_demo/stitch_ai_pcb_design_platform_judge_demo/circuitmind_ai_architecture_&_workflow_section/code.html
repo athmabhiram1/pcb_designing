@@ -1,0 +1,338 @@
+<!DOCTYPE html>
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>CircuitMind AI</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com" rel="preconnect"/>
+<link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script>
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        "primary": "#3c83f6",
+                        "primary-glow": "#8b5cf6",
+                        "background-dark": "#0a0a0f",
+                        "surface-dark": "#13131f",
+                        "surface-border": "#27273a",
+                        "card-bg": "#181826",
+                        "text-main": "#f8fafc",
+                        "text-muted": "#94a3b8"
+                    },
+                    fontFamily: {
+                        "display": ["Inter", "sans-serif"],
+                        "body": ["Inter", "sans-serif"]
+                    },
+                    backgroundImage: {
+                        'grid-pattern': "linear-gradient(to right, #1f1f2e 1px, transparent 1px), linear-gradient(to bottom, #1f1f2e 1px, transparent 1px)",
+                    }
+                },
+            },
+        }
+    </script>
+<style>
+        .text-glow {
+            text-shadow: 0 0 20px rgba(60, 131, 246, 0.5);
+        }
+        .gradient-border {
+            position: relative;
+            background: #181826;
+            border-radius: 0.75rem;
+        }
+        .gradient-border::before {
+            content: "";
+            position: absolute;
+            inset: -1px;
+            z-index: -1;
+            border-radius: 0.8rem;
+            background: linear-gradient(to bottom right, #27273a, #3c83f6, #27273a);
+            opacity: 0.4;
+        }.schematic-line {
+            stroke-dasharray: 4 2;
+            animation: flow 30s linear infinite;
+        }
+        @keyframes flow {
+            from { stroke-dashoffset: 100; }
+            to { stroke-dashoffset: 0; }
+        }
+        .diagram-card {
+            @apply bg-card-bg border border-surface-border rounded-xl shadow-lg relative z-20 transition-all duration-300 hover:border-primary/40;
+        }
+    </style>
+</head>
+<body class="bg-background-dark text-text-main font-body antialiased selection:bg-primary selection:text-white overflow-x-hidden">
+<header class="sticky top-0 z-50 w-full border-b border-surface-border bg-background-dark/80 backdrop-blur-md">
+<div class="mx-auto flex h-16 max-w-7xl items-center justify-between px-6 lg:px-8">
+<div class="flex items-center gap-3">
+<div class="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-primary to-primary-glow text-white">
+<span class="material-symbols-outlined text-[20px]">memory</span>
+</div>
+<h1 class="text-lg font-bold tracking-tight text-white">CircuitMind AI</h1>
+</div>
+<nav class="hidden md:flex items-center gap-8">
+<a class="text-sm font-medium text-text-muted hover:text-white transition-colors" href="#">How It Works</a>
+<a class="text-sm font-medium text-text-muted hover:text-white transition-colors" href="#">Architecture</a>
+<a class="text-sm font-medium text-text-muted hover:text-white transition-colors" href="#">Tech Stack</a>
+<a class="text-sm font-medium text-text-muted hover:text-white transition-colors" href="#">Docs</a>
+</nav>
+<div class="flex items-center gap-4">
+<button class="hidden sm:flex items-center justify-center rounded-lg bg-primary px-4 py-2 text-sm font-bold text-white shadow-[0_0_15px_rgba(60,131,246,0.5)] transition-transform hover:scale-105 hover:bg-blue-600">
+<span class="mr-2 material-symbols-outlined text-[18px]">download</span>
+                Download Plugin
+            </button>
+</div>
+</div>
+</header>
+<main class="flex flex-col">
+<section class="relative px-6 py-24 lg:py-36 overflow-hidden">
+<div class="absolute inset-0 z-0 pointer-events-none">
+<div class="absolute top-0 left-1/2 -translate-x-1/2 w-[800px] h-[500px] bg-primary/10 rounded-full blur-[120px]"></div>
+<div class="absolute bottom-0 right-0 w-[600px] h-[400px] bg-primary-glow/10 rounded-full blur-[100px]"></div>
+<div class="absolute inset-0 bg-grid-pattern bg-[length:40px_40px] opacity-10"></div>
+</div>
+<div class="relative z-10 mx-auto max-w-4xl text-center">
+<div class="inline-flex items-center gap-2 rounded-full border border-surface-border bg-surface-dark/50 px-3 py-1 mb-8 shadow-sm">
+<span class="relative flex h-2 w-2">
+<span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
+<span class="relative inline-flex rounded-full h-2 w-2 bg-green-500"></span>
+</span>
+<span class="text-xs font-medium text-text-muted">KiCad 9.0 Support Live</span>
+</div>
+<h2 class="text-4xl md:text-6xl font-bold tracking-tight text-white mb-6 leading-tight">
+                Generative AI for <br/>
+<span class="text-transparent bg-clip-text bg-gradient-to-r from-primary to-primary-glow">Printed Circuit Boards</span>
+</h2>
+<p class="text-lg text-text-muted max-w-2xl mx-auto mb-10 leading-relaxed">
+                Connect your ideas directly to manufacturing-ready schematics. Local, private, and seamlessly integrated workflow.
+            </p>
+</div>
+</section>
+<section class="relative px-6 py-24 lg:py-32 bg-surface-dark border-y border-surface-border">
+<div class="mx-auto max-w-7xl">
+<div class="text-center mb-20">
+<h3 class="text-3xl font-bold text-white mb-4">From Idea to PCB in 4 Steps</h3>
+<p class="text-text-muted">An intuitive workflow designed for hardware engineers.</p>
+</div>
+<div class="relative grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-12 lg:gap-8">
+<div class="hidden lg:block absolute top-[2.5rem] left-[10%] right-[10%] h-[1px] bg-gradient-to-r from-transparent via-primary/30 to-transparent z-0"></div>
+<div class="relative z-10 flex flex-col items-center text-center group">
+<div class="relative">
+<div class="w-20 h-20 rounded-2xl bg-gradient-to-b from-surface-border to-surface-dark border border-surface-border group-hover:border-primary/50 transition-all duration-300 flex items-center justify-center mb-6 shadow-lg group-hover:shadow-primary/10">
+<span class="material-symbols-outlined text-3xl text-primary group-hover:scale-110 transition-transform">chat</span>
+</div>
+<div class="absolute -bottom-3 left-1/2 -translate-x-1/2 w-6 h-6 bg-surface-dark border border-surface-border rounded-full flex items-center justify-center text-[10px] font-bold text-text-muted shadow-sm z-20">1</div>
+</div>
+<h4 class="text-base font-semibold text-white mb-2 mt-2">Describe Circuit</h4>
+<p class="text-sm text-text-muted leading-relaxed px-2">Input requirements in natural language with specific constraints.</p>
+</div>
+<div class="relative z-10 flex flex-col items-center text-center group">
+<div class="relative">
+<div class="w-20 h-20 rounded-2xl bg-gradient-to-b from-surface-border to-surface-dark border border-surface-border group-hover:border-primary/50 transition-all duration-300 flex items-center justify-center mb-6 shadow-lg group-hover:shadow-primary/10">
+<span class="material-symbols-outlined text-3xl text-primary group-hover:scale-110 transition-transform">neurology</span>
+</div>
+<div class="absolute -bottom-3 left-1/2 -translate-x-1/2 w-6 h-6 bg-surface-dark border border-surface-border rounded-full flex items-center justify-center text-[10px] font-bold text-text-muted shadow-sm z-20">2</div>
+</div>
+<h4 class="text-base font-semibold text-white mb-2 mt-2">AI Generation</h4>
+<p class="text-sm text-text-muted leading-relaxed px-2">Local engine interprets logic &amp; intelligently places components.</p>
+</div>
+<div class="relative z-10 flex flex-col items-center text-center group">
+<div class="relative">
+<div class="w-20 h-20 rounded-2xl bg-gradient-to-b from-surface-border to-surface-dark border border-surface-border group-hover:border-primary/50 transition-all duration-300 flex items-center justify-center mb-6 shadow-lg group-hover:shadow-primary/10">
+<span class="material-symbols-outlined text-3xl text-primary group-hover:scale-110 transition-transform">fact_check</span>
+</div>
+<div class="absolute -bottom-3 left-1/2 -translate-x-1/2 w-6 h-6 bg-surface-dark border border-surface-border rounded-full flex items-center justify-center text-[10px] font-bold text-text-muted shadow-sm z-20">3</div>
+</div>
+<h4 class="text-base font-semibold text-white mb-2 mt-2">DFM Validation</h4>
+<p class="text-sm text-text-muted leading-relaxed px-2">Automated checks against industry manufacturing standards.</p>
+</div>
+<div class="relative z-10 flex flex-col items-center text-center group">
+<div class="relative">
+<div class="w-20 h-20 rounded-2xl bg-gradient-to-b from-surface-border to-surface-dark border border-surface-border group-hover:border-primary/50 transition-all duration-300 flex items-center justify-center mb-6 shadow-lg group-hover:shadow-primary/10">
+<span class="material-symbols-outlined text-3xl text-primary group-hover:scale-110 transition-transform">download</span>
+</div>
+<div class="absolute -bottom-3 left-1/2 -translate-x-1/2 w-6 h-6 bg-surface-dark border border-surface-border rounded-full flex items-center justify-center text-[10px] font-bold text-text-muted shadow-sm z-20">4</div>
+</div>
+<h4 class="text-base font-semibold text-white mb-2 mt-2">Export KiCad</h4>
+<p class="text-sm text-text-muted leading-relaxed px-2">Download complete project files ready for routing.</p>
+</div>
+</div>
+</div>
+</section>
+<section class="relative px-6 py-24 lg:py-40 bg-background-dark overflow-hidden">
+<div class="absolute inset-0 bg-[size:40px_40px] bg-grid-pattern opacity-10"></div>
+<div class="relative mx-auto max-w-7xl">
+<div class="text-center mb-24">
+<h3 class="text-3xl font-bold text-white mb-4">Powered by Local AI</h3>
+<p class="text-text-muted max-w-2xl mx-auto">Privacy-first architecture running entirely on your machine or private cloud.</p>
+</div>
+<div class="relative w-full max-w-6xl mx-auto">
+<svg class="absolute inset-0 w-full h-full pointer-events-none z-0" style="overflow: visible;">
+<defs>
+<marker id="arrowhead" markerHeight="7" markerWidth="10" orient="auto" refX="9" refY="3.5">
+<polygon fill="#64748b" points="0 0, 10 3.5, 0 7"></polygon>
+</marker>
+<linearGradient id="lineGradient" x1="0%" x2="100%" y1="0%" y2="0%">
+<stop offset="0%" style="stop-color:#3b82f6;stop-opacity:0.2"></stop>
+<stop offset="50%" style="stop-color:#3b82f6;stop-opacity:0.8"></stop>
+<stop offset="100%" style="stop-color:#3b82f6;stop-opacity:0.2"></stop>
+</linearGradient>
+</defs>
+<path class="hidden md:block" d="M260 200 L380 200" marker-end="url(#arrowhead)" stroke="#334155" stroke-width="1.5"></path>
+<text class="hidden md:block bg-background-dark px-1" fill="#94a3b8" font-family="Inter" font-size="11" text-anchor="middle" x="320" y="190">HTTP / JSON</text>
+<path class="hidden md:block" d="M720 200 L840 200" marker-end="url(#arrowhead)" stroke="#334155" stroke-width="1.5"></path>
+<text class="hidden md:block" fill="#94a3b8" font-family="Inter" font-size="11" text-anchor="middle" x="780" y="190">OLLAMA API</text>
+<path class="hidden md:block" d="M550 350 L550 420" stroke="#334155" stroke-dasharray="4 2" stroke-width="1.5"></path>
+</svg>
+<div class="flex flex-col md:flex-row items-center justify-center gap-10 md:gap-16 lg:gap-24 relative z-10 min-h-[400px]">
+<div class="diagram-card w-full md:w-64 p-5 flex flex-col gap-3">
+<div class="flex items-center gap-3 border-b border-surface-border pb-3 mb-1">
+<div class="w-8 h-8 rounded bg-blue-900/20 border border-blue-500/20 flex items-center justify-center text-blue-400">
+<span class="material-symbols-outlined text-lg">extension</span>
+</div>
+<div>
+<h4 class="text-sm font-bold text-white">KiCad Plugin</h4>
+<span class="text-[10px] text-text-muted uppercase tracking-wider">Client</span>
+</div>
+</div>
+<div class="space-y-2">
+<div class="bg-surface-dark rounded px-3 py-2 border border-surface-border text-xs text-text-muted flex items-center gap-2">
+<span class="w-1.5 h-1.5 rounded-full bg-blue-500"></span> Python Scripting
+                            </div>
+<div class="bg-surface-dark rounded px-3 py-2 border border-surface-border text-xs text-text-muted flex items-center gap-2">
+<span class="w-1.5 h-1.5 rounded-full bg-blue-500"></span> UI Integration
+                            </div>
+</div>
+</div>
+<div class="diagram-card w-full md:w-[340px] p-1 bg-gradient-to-br from-surface-border via-surface-dark to-surface-border">
+<div class="bg-card-bg rounded-[10px] p-5 h-full relative overflow-hidden">
+<div class="absolute top-0 left-1/2 -translate-x-1/2 w-32 h-1 bg-primary blur-[4px]"></div>
+<div class="flex items-center gap-3 mb-6">
+<span class="material-symbols-outlined text-primary">dns</span>
+<div>
+<h4 class="text-sm font-bold text-white">AI Backend</h4>
+<p class="text-[10px] text-text-muted">FastAPI / Python Orchestrator</p>
+</div>
+</div>
+<div class="grid grid-cols-2 gap-3">
+<div class="bg-surface-dark border border-surface-border rounded p-2.5 text-center transition-colors hover:border-primary/30">
+<span class="material-symbols-outlined text-primary text-sm mb-1">psychology</span>
+<div class="text-xs font-medium text-white">LLM Engine</div>
+</div>
+<div class="bg-surface-dark border border-surface-border rounded p-2.5 text-center transition-colors hover:border-primary/30">
+<span class="material-symbols-outlined text-primary text-sm mb-1">grid_view</span>
+<div class="text-xs font-medium text-white">Placement</div>
+</div>
+<div class="bg-surface-dark border border-surface-border rounded p-2.5 text-center transition-colors hover:border-primary/30">
+<span class="material-symbols-outlined text-primary text-sm mb-1">rule</span>
+<div class="text-xs font-medium text-white">DFM Engine</div>
+</div>
+<div class="bg-surface-dark border border-surface-border rounded p-2.5 text-center transition-colors hover:border-primary/30">
+<span class="material-symbols-outlined text-primary text-sm mb-1">output</span>
+<div class="text-xs font-medium text-white">KiCad Export</div>
+</div>
+</div>
+</div>
+</div>
+<div class="diagram-card w-full md:w-64 p-5 flex flex-col gap-3">
+<div class="flex items-center gap-3 border-b border-surface-border pb-3 mb-1">
+<div class="w-8 h-8 rounded bg-purple-900/20 border border-purple-500/20 flex items-center justify-center text-purple-400">
+<span class="material-symbols-outlined text-lg">smart_toy</span>
+</div>
+<div>
+<h4 class="text-sm font-bold text-white">Local LLM</h4>
+<span class="text-[10px] text-text-muted uppercase tracking-wider">Inference</span>
+</div>
+</div>
+<div class="space-y-2">
+<div class="bg-surface-dark rounded px-3 py-2 border border-surface-border text-xs text-text-muted flex justify-between items-center">
+<span>Ollama</span>
+<span class="text-green-500 text-[10px]">● Active</span>
+</div>
+<div class="bg-surface-dark rounded px-3 py-2 border border-surface-border text-xs text-text-muted flex justify-between items-center">
+<span>Llama 3 / Mistral</span>
+</div>
+</div>
+</div>
+</div>
+<div class="mt-8 md:mt-0 md:absolute md:bottom-[-80px] md:left-1/2 md:-translate-x-1/2 w-full md:w-64 z-10">
+<div class="bg-surface-dark/50 border border-surface-border border-dashed rounded-lg p-3 flex items-center justify-center gap-3 backdrop-blur-sm">
+<span class="material-symbols-outlined text-text-muted">library_books</span>
+<div class="text-left">
+<h5 class="text-sm font-bold text-white">Template Library</h5>
+<p class="text-[10px] text-text-muted">Standard Footprints &amp; Symbols</p>
+</div>
+</div>
+</div>
+</div>
+<div class="flex flex-wrap items-center justify-center gap-x-8 gap-y-4 mt-32 pt-10 border-t border-surface-border/50">
+<div class="flex items-center gap-2">
+<span class="material-symbols-outlined text-green-500 text-[18px]">verified_user</span>
+<span class="text-sm font-medium text-text-muted">100% Local Processing</span>
+</div>
+<div class="hidden md:block w-1 h-1 bg-surface-border rounded-full"></div>
+<div class="flex items-center gap-2">
+<span class="material-symbols-outlined text-green-500 text-[18px]">cloud_off</span>
+<span class="text-sm font-medium text-text-muted">Zero Cloud Dependencies</span>
+</div>
+<div class="hidden md:block w-1 h-1 bg-surface-border rounded-full"></div>
+<div class="flex items-center gap-2">
+<span class="material-symbols-outlined text-green-500 text-[18px]">code</span>
+<span class="text-sm font-medium text-text-muted">Open Source Core</span>
+</div>
+<div class="hidden md:block w-1 h-1 bg-surface-border rounded-full"></div>
+<div class="flex items-center gap-2">
+<span class="material-symbols-outlined text-green-500 text-[18px]">folder_data</span>
+<span class="text-sm font-medium text-text-muted">Native KiCad 9.0 Files</span>
+</div>
+</div>
+</div>
+</section>
+<section class="py-24 bg-surface-dark border-t border-surface-border">
+<div class="mx-auto max-w-7xl px-6">
+<p class="text-center text-xs font-semibold text-primary/80 uppercase tracking-[0.2em] mb-12">Built With Modern Standards</p>
+<div class="flex flex-wrap justify-center gap-3">
+<div class="group px-4 py-1.5 rounded-full border border-surface-border bg-card-bg hover:bg-surface-border/50 text-white text-xs font-medium flex items-center gap-2 transition-all cursor-default">
+<span class="w-1.5 h-1.5 rounded-full bg-yellow-400 group-hover:shadow-[0_0_8px_rgba(250,204,21,0.6)] transition-shadow"></span> Python
+                </div>
+<div class="group px-4 py-1.5 rounded-full border border-surface-border bg-card-bg hover:bg-surface-border/50 text-white text-xs font-medium flex items-center gap-2 transition-all cursor-default">
+<span class="w-1.5 h-1.5 rounded-full bg-teal-400 group-hover:shadow-[0_0_8px_rgba(45,212,191,0.6)] transition-shadow"></span> FastAPI
+                </div>
+<div class="group px-4 py-1.5 rounded-full border border-surface-border bg-card-bg hover:bg-surface-border/50 text-white text-xs font-medium flex items-center gap-2 transition-all cursor-default">
+<span class="w-1.5 h-1.5 rounded-full bg-white group-hover:shadow-[0_0_8px_rgba(255,255,255,0.6)] transition-shadow"></span> Ollama
+                </div>
+<div class="group px-4 py-1.5 rounded-full border border-surface-border bg-card-bg hover:bg-surface-border/50 text-white text-xs font-medium flex items-center gap-2 transition-all cursor-default">
+<span class="w-1.5 h-1.5 rounded-full bg-blue-600 group-hover:shadow-[0_0_8px_rgba(37,99,235,0.6)] transition-shadow"></span> KiCad
+                </div>
+<div class="group px-4 py-1.5 rounded-full border border-surface-border bg-card-bg hover:bg-surface-border/50 text-white text-xs font-medium flex items-center gap-2 transition-all cursor-default">
+<span class="w-1.5 h-1.5 rounded-full bg-orange-500 group-hover:shadow-[0_0_8px_rgba(249,115,22,0.6)] transition-shadow"></span> SKiDL
+                </div>
+<div class="group px-4 py-1.5 rounded-full border border-surface-border bg-card-bg hover:bg-surface-border/50 text-white text-xs font-medium flex items-center gap-2 transition-all cursor-default">
+<span class="w-1.5 h-1.5 rounded-full bg-purple-500 group-hover:shadow-[0_0_8px_rgba(168,85,247,0.6)] transition-shadow"></span> ONNX
+                </div>
+<div class="group px-4 py-1.5 rounded-full border border-surface-border bg-card-bg hover:bg-surface-border/50 text-white text-xs font-medium flex items-center gap-2 transition-all cursor-default">
+<span class="w-1.5 h-1.5 rounded-full bg-red-500 group-hover:shadow-[0_0_8px_rgba(239,68,68,0.6)] transition-shadow"></span> PySpice
+                </div>
+</div>
+</div>
+</section>
+<footer class="bg-background-dark border-t border-surface-border py-12 px-6">
+<div class="mx-auto max-w-7xl flex flex-col md:flex-row justify-between items-center gap-6">
+<div class="flex items-center gap-2 text-white">
+<span class="material-symbols-outlined">memory</span>
+<span class="font-bold">CircuitMind AI</span>
+</div>
+<p class="text-sm text-text-muted">© 2024 CircuitMind AI. All rights reserved.</p>
+<div class="flex gap-6">
+<a class="text-text-muted hover:text-white transition-colors" href="#">GitHub</a>
+<a class="text-text-muted hover:text-white transition-colors" href="#">Twitter</a>
+<a class="text-text-muted hover:text-white transition-colors" href="#">Discord</a>
+</div>
+</div>
+</footer>
+</main>
+
+</body></html>

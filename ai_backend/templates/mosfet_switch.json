@@ -1,0 +1,71 @@
+{
+  "description": "NMOS low-side switch circuit — logic-level gate control, load driven from VCC to drain",
+  "components": [
+    {
+      "ref": "Q1",
+      "lib": "Device",
+      "part": "Q_NMOS_GSD",
+      "value": "2N7002",
+      "footprint": "Package_TO_SOT_SMD:SOT-23",
+      "description": "2N7002 N-channel MOSFET, Vgs(th)=1-2.5V, Id=300mA, Vds=60V",
+      "pins": [
+        {"number": "1", "name": "S"},
+        {"number": "2", "name": "G"},
+        {"number": "3", "name": "D"}
+      ]
+    },
+    {
+      "ref": "R1",
+      "lib": "Device",
+      "part": "R",
+      "value": "10k",
+      "footprint": "Resistor_SMD:R_0402_1005Metric",
+      "description": "Gate resistor — limits gate current spike and parasitic ringing",
+      "pins": [{"number": "1", "name": "1"}, {"number": "2", "name": "2"}]
+    },
+    {
+      "ref": "R2",
+      "lib": "Device",
+      "part": "R",
+      "value": "100k",
+      "footprint": "Resistor_SMD:R_0402_1005Metric",
+      "description": "Gate pull-down resistor — ensures OFF state when control signal is floating",
+      "pins": [{"number": "1", "name": "1"}, {"number": "2", "name": "2"}]
+    },
+    {
+      "ref": "D1",
+      "lib": "Device",
+      "part": "D",
+      "value": "1N4148W",
+      "footprint": "Diode_SMD:D_SOD-123",
+      "description": "Flyback diode — protects MOSFET against inductive load spikes",
+      "pins": [{"number": "1", "name": "A"}, {"number": "2", "name": "K"}]
+    },
+    {
+      "ref": "R3",
+      "lib": "Device",
+      "part": "R",
+      "value": "1k",
+      "footprint": "Resistor_SMD:R_0402_1005Metric",
+      "description": "Load resistor (example — replace with actual load)",
+      "pins": [{"number": "1", "name": "1"}, {"number": "2", "name": "2"}]
+    }
+  ],
+  "connections": [
+    {"net": "VCC",     "pins": ["R3.1", "D1.2"]},
+    {"net": "LOAD",    "pins": ["R3.2", "Q1.3", "D1.1"]},
+    {"net": "CTRL",    "pins": ["R1.1"]},
+    {"net": "GATE",    "pins": ["R1.2", "R2.1", "Q1.2"]},
+    {"net": "GND",     "pins": ["Q1.1", "R2.2"]}
+  ],
+  "board_width": 50.0,
+  "board_height": 40.0,
+  "metadata": {
+    "author": "AI PCB Assistant",
+    "version": "1.0",
+    "category": "switching",
+    "topology": "NMOS low-side switch",
+    "max_load_current": "300mA",
+    "logic_compatible": "3.3V/5V"
+  }
+}
