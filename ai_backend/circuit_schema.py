@@ -228,6 +228,10 @@ class Component(BaseModel):
     
     # Placement
     position: Point2D = Field(default_factory=lambda: Point2D(x=0, y=0))
+    # x / y are flat aliases kept in sync with position so the KiCad exporter
+    # (which reads and mutates comp.x / comp.y directly) works without changes.
+    x: float = Field(default=0.0, ge=-1000.0, le=1000.0)
+    y: float = Field(default=0.0, ge=-1000.0, le=1000.0)
     rotation: float = Field(default=0.0, ge=-360, le=360)
     layer: Literal["F.Cu", "B.Cu"] = Field(default="F.Cu", description="Top or bottom layer")
     locked: bool = Field(default=False, description="Prevent auto-placement")
@@ -343,7 +347,47 @@ class Component(BaseModel):
                     pass
         
         return f"{v}F" if v else v
-    
+
+    @model_validator(mode='after')
+    def sync_xy_from_position(self) -> 'Component':
+        """Keep flat x/y fields in sync with the nested position object.
+
+        Priority rules (at construction time):
+        - If x/y were explicitly supplied (non-zero) but position is still at
+          default (0,0), promote x/y into position.
+        - If position was explicitly supplied (non-zero) but x/y are at default
+          (0.0), copy position into x/y.
+        - If both are supplied, x/y take priority (they're the simpler API).
+        """
+        pos_non_default = self.position.x != 0.0 or self.position.y != 0.0
+        xy_non_default  = self.x != 0.0 or self.y != 0.0
+
+        if xy_non_default:
+            # x/y have a real value — make position match
+            self.position = Point2D(x=self.x, y=self.y)
+        elif pos_non_default:
+            # only position has a real value — copy out to x/y
+            self.x = self.position.x
+            self.y = self.position.y
+        return self
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        """Keep flat x/y and nested position in sync on every mutation.
+
+        The KiCad exporter layout code mutates comp.x / comp.y directly
+        (e.g. ic.x = sheet_cx).  Without this override, position.x stays
+        stale, so get_bounding_box() and any code that reads position after
+        layout would return wrong coordinates.
+        """
+        super().__setattr__(name, value)
+        if name == 'x':
+            super().__setattr__('position', Point2D(x=float(value), y=self.y))
+        elif name == 'y':
+            super().__setattr__('position', Point2D(x=self.x, y=float(value)))
+        elif name == 'position' and isinstance(value, Point2D):
+            super().__setattr__('x', value.x)
+            super().__setattr__('y', value.y)
+
     @property
     def ref_prefix(self) -> str:
         """Extract reference prefix."""
@@ -386,9 +430,11 @@ class Component(BaseModel):
         if self.rotation % 180 != 0:
             w, h = h, w
         
+        # Use flat x/y (always current) not position (may lag after kicad
+        # exporter or placement engine mutates x/y directly).
         return BoundingBox(
-            x=self.position.x - w/2 - padding_mm,
-            y=self.position.y - h/2 - padding_mm,
+            x=self.x - w/2 - padding_mm,
+            y=self.y - h/2 - padding_mm,
             width=w + 2*padding_mm,
             height=h + 2*padding_mm
         )

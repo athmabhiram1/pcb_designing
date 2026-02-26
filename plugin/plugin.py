@@ -363,7 +363,7 @@ class AIPlacementPlugin(pcbnew.ActionPlugin):
             )
             with urllib.request.urlopen(req, timeout=3) as resp:
                 data = json.loads(resp.read().decode())
-                return data.get("status") in ("ok", "healthy")
+                return data.get("status") in ("ok", "healthy", "degraded")
         except Exception as e:
             logger.warning(f"Backend check failed: {e}")
             return False
@@ -445,6 +445,7 @@ class AIPCBFrame(wx.Frame):
         self.nets: List[NetInfo] = []
         self.constraints: List[Constraint] = []
         self.pending_requests: Set[str] = set()
+        self.request_types: Dict[str, str] = {}
         
         self._init_ui()
         self._extract_board_data()
@@ -596,15 +597,18 @@ class AIPCBFrame(wx.Frame):
     
     def _handle_async_result(self, req_id: str, status: str, result: Any):
         """Handle completed async request."""
+        req_type = self.request_types.pop(req_id, "")
+
         if status == "error":
             self.SetStatusText(f"Error: {result}")
             return
         
-        # Route to appropriate handler based on request type
-        if "optimize" in str(result):
+        if req_type == "optimize":
             self._apply_placement_result(result)
-        elif "dfm" in str(result):
+        elif req_type == "dfm":
             self._show_dfm_result(result)
+        elif req_type == "generate":
+            self._show_generate_result(result)
     
     def _extract_board_data(self):
         """Extract comprehensive board data."""
@@ -779,21 +783,22 @@ class AIPCBFrame(wx.Frame):
             callback=self._on_request_complete
         )
         self.pending_requests.add(req_id)
+        self.request_types[req_id] = "generate"
     
     def _on_optimize_tool(self, event):
         """Run placement optimization."""
         self.SetStatusText("Optimizing placement...")
         
         data = self._get_board_data_dict()
-        data["method"] = "hybrid"
         data["thermal_aware"] = CONFIG.thermal_aware
         
         req_id = HTTP_CLIENT.request(
-            f"{CONFIG.backend_url}/placement/optimize",
+            f"{CONFIG.backend_url}/placement/optimize?algorithm=auto",
             data,
             callback=self._on_request_complete
         )
         self.pending_requests.add(req_id)
+        self.request_types[req_id] = "optimize"
     
     def _on_dfm_tool(self, event):
         """Run DFM check."""
@@ -807,6 +812,7 @@ class AIPCBFrame(wx.Frame):
             callback=self._on_request_complete
         )
         self.pending_requests.add(req_id)
+        self.request_types[req_id] = "dfm"
     
     def _on_request_complete(self, request_id: str):
         """Called when async request completes."""
@@ -815,11 +821,18 @@ class AIPCBFrame(wx.Frame):
     
     def _apply_placement_result(self, result: Dict):
         """Apply placement optimization results."""
-        if not result.get("success"):
+        if not isinstance(result, dict):
+            wx.MessageBox("Optimization failed: invalid response format", "Error")
+            return
+
+        if result.get("success") is False:
             wx.MessageBox(f"Optimization failed: {result.get('error')}", "Error")
             return
         
         positions = result.get("positions", {})
+        if not positions:
+            wx.MessageBox("Optimization completed but returned no positions.", "Info")
+            return
         
         # Create undo point (API varies by KiCad version)
         try:
@@ -862,7 +875,13 @@ class AIPCBFrame(wx.Frame):
     
     def _show_dfm_result(self, result: Dict):
         """Display DFM check results."""
-        violations = result.get("violations", [])
+        if isinstance(result, list):
+            violations = result
+        elif isinstance(result, dict):
+            violations = result.get("violations", [])
+        else:
+            violations = []
+
         if not violations:
             self.info_text.SetValue("✓ No DFM issues found!")
             return
@@ -870,7 +889,7 @@ class AIPCBFrame(wx.Frame):
         text = f"DFM Issues Found: {len(violations)}\n\n"
         for v in violations[:20]:
             sev = v.get('severity', 'warning').upper()
-            text += f"[{sev}] {v['type']}: {v['message']}\n"
+            text += f"[{sev}] {v.get('type', 'violation')}: {v.get('message', 'No details')}\n"
         
         self.info_text.SetValue(text)
         
@@ -878,6 +897,32 @@ class AIPCBFrame(wx.Frame):
         for v in violations:
             for ref in v.get('components', []):
                 self.canvas.highlight_component(ref, "red")
+
+    def _show_generate_result(self, result: Any):
+        """Display generate endpoint response in the info panel."""
+        if not isinstance(result, dict):
+            self.info_text.SetValue("Generate failed: invalid response format")
+            return
+
+        if not result.get("success"):
+            self.info_text.SetValue(f"Generate failed: {result.get('error', 'Unknown error')}")
+            self.SetStatusText("Generate failed")
+            return
+
+        circuit_data = result.get("circuit_data") or {}
+        component_count = len(circuit_data.get("components", []))
+        net_count = len(circuit_data.get("connections", []))
+
+        summary = (
+            f"Generation complete!\n\n"
+            f"Template: {result.get('template_used', 'LLM/custom')}\n"
+            f"Components: {component_count}\n"
+            f"Nets: {net_count}\n"
+            f"Time: {result.get('generation_time_ms', 0):.1f} ms\n"
+            f"Download: {result.get('download_url', 'n/a')}"
+        )
+        self.info_text.SetValue(summary)
+        self.SetStatusText("Generation complete")
     
     def _on_toggle_fixed(self, event):
         """Toggle fixed status of selected components."""

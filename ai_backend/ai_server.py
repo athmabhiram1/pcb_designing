@@ -1,6 +1,23 @@
 """
-AI PCB Assistant - Advanced FastAPI Backend Server v2.0
-Handles LLM inference, placement optimization, and advanced DFM checking with full netlist integration.
+AI PCB Assistant – FastAPI Backend v2.1
+Handles LLM inference, netlist-aware placement optimisation, and advanced DFM checking.
+
+Fixes vs v2.0:
+  - ComponentData mutable (model_config frozen=False) → runtime mutation works
+  - PinRef / ComponentData ref patterns widened for real KiCad refs (#PWR01, SW1 …)
+  - _simulated_annealing implemented (was missing → AttributeError crash)
+  - numpy made optional (hard crash if absent)
+  - SpatialIndex.query_neighbors corrected return type and callers fixed
+  - BoardData.validate_references soft-warns instead of raising for power symbols
+  - CORS defaults include null / file:// origin for KiCad plugin
+  - _check_high_speed_signal walrus operator bug fixed
+  - _async_save_circuit guarded properly; fallback is always sync
+  - download_url now included in GenerateResponse
+  - /download/{filename}, /circuit/{name}, /generate/schematic restored
+  - Grid placement column-advance logic fixed
+  - Rotation near-zero comparison uses tolerance
+  - Logging deduplication fixed
+  - Config converted to plain module-level constants (no fragile frozen dataclass)
 """
 
 from __future__ import annotations
@@ -10,1066 +27,979 @@ import json
 import logging
 import math
 import os
+import random
 import re
 import tempfile
 import time
 import uuid
 from collections import defaultdict
 from contextlib import asynccontextmanager
-from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Optional, Dict, List, Set, Tuple, Callable, Literal
-from functools import lru_cache, wraps
+from typing import Any, Dict, List, Literal, Optional, Set, Tuple
 
-import numpy as np
-from fastapi import FastAPI, HTTPException, Request, status, BackgroundTasks
+from fastapi import BackgroundTasks, FastAPI, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field, field_validator, model_validator, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-# Optional advanced dependencies
+# ── Optional heavy dependencies ───────────────────────────────────────────────
+
+try:
+    import numpy as np
+    _NP = True
+except ImportError:
+    np = None  # type: ignore[assignment]
+    _NP = False
+
 try:
     import networkx as nx
-    NETWORKX_AVAILABLE = True
+    _NX = True
 except ImportError:
-    NETWORKX_AVAILABLE = False
+    nx = None  # type: ignore[assignment]
+    _NX = False
 
 try:
     import aiofiles
-    AIOFILES_AVAILABLE = True
+    _AIOFILES = True
 except ImportError:
-    AIOFILES_AVAILABLE = False
+    aiofiles = None  # type: ignore[assignment]
+    _AIOFILES = False
 
-# ── Logging Configuration ─────────────────────────────────────────────────────
-
-class RequestIdFilter(logging.Filter):
-    def filter(self, record):
-        record.request_id = getattr(record, 'request_id', 'system')
-        return True
+# ── Logging ───────────────────────────────────────────────────────────────────
+# Use a single handler on the root logger – no StreamHandler added manually
+# (basicConfig does it already), and propagate=True (default) so we don't
+# double-log.
 
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
 )
 logger = logging.getLogger(__name__)
-# Module-level handler with request_id field; RequestIdFilter injects a default
-# so formatters never KeyError even when request_id isn't set on the record.
-_module_handler = logging.StreamHandler()
-_module_handler.setFormatter(
-    logging.Formatter("%(asctime)s [%(levelname)s] [%(request_id)s] %(name)s: %(message)s")
-)
-_module_handler.addFilter(RequestIdFilter())
-logger.addHandler(_module_handler)
-logger.propagate = False  # Don't double-log via root handler
 
-# ── Configuration ─────────────────────────────────────────────────────────────
+# ── Configuration (plain constants – no frozen dataclass) ─────────────────────
 
-@dataclass(frozen=True)
-class Config:
-    """Application configuration."""
-    BASE_DIR: Path = field(default_factory=lambda: Path(__file__).parent)
-    TEMPLATES_DIR: Path = field(default_factory=lambda: Path(__file__).parent / "templates")
-    OUTPUT_DIR: Path = field(default_factory=lambda: Path(__file__).parent / "output")
-    TEMP_DIR: Path = field(default_factory=lambda: Path(tempfile.gettempdir()) / "ai_pcb")
-    
-    # DFM Settings
-    DFM_MIN_SPACING_MM: float = 0.5  # Modern manufacturing standard
-    DFM_EDGE_CLEARANCE_MM: float = 1.0
-    DFM_MAX_COMPONENT_HEIGHT_MM: float = 25.0
-    DFM_DECOUPLING_MAX_DISTANCE_MM: float = 10.0  # Max distance for effective decoupling
-    
-    # Performance
-    SPATIAL_GRID_SIZE_MM: float = 5.0
-    MAX_COMPONENTS_PER_GRID_CELL: int = 10
-    
-    # Analysis
-    ENABLE_GRAPH_ANALYSIS: bool = True
-    ENABLE_THERMAL_ANALYSIS: bool = True
+_BASE_DIR      = Path(__file__).parent
+TEMPLATES_DIR  = _BASE_DIR / "templates"
+OUTPUT_DIR     = _BASE_DIR / "output"
+TEMP_DIR       = Path(tempfile.gettempdir()) / "ai_pcb"
 
-CONFIG = Config()
-CONFIG.TEMP_DIR.mkdir(parents=True, exist_ok=True)
+# DFM thresholds
+DFM_MIN_SPACING_MM          = 0.5   # Modern SMT manufacturing standard
+DFM_EDGE_CLEARANCE_MM       = 1.0
+DFM_MAX_COMPONENT_HEIGHT_MM = 25.0
+DFM_DECOUPLING_MAX_DIST_MM  = 10.0
 
-# ── Template Registry ─────────────────────────────────────────────────────────
+# Spatial index
+SPATIAL_GRID_SIZE_MM = 5.0
+
+# Placement
+WIRE_LENGTH_WEIGHT = 0.4
+SA_INITIAL_TEMP    = 100.0
+SA_COOLING_RATE    = 0.98
+SA_ITERATIONS      = 500
+
+# ── Template keyword registry ─────────────────────────────────────────────────
+# (keywords, template_stem, score_weight) – highest cumulative score wins.
 
 TEMPLATE_KEYWORDS: List[Tuple[List[str], str, int]] = [
-    # Keywords, template_name, priority (higher = more specific)
     (["555 timer", "ne555", "astable 555", "555 oscillator"], "555_timer_oscillator", 100),
-    (["555", "timer", "blink", "astable", "multivibrator"], "555_timer", 80),
-    (["3.3v regulator", "3v3 ldo", "ams1117-3.3", "3.3v power"], "3v3_regulator_ldo", 100),
-    (["3.3v", "3v3", "ams1117", "ldo", "voltage regulator"], "3v3_regulator", 80),
-    (["5v regulator", "5v ldo", "7805", "5v power"], "5v_regulator", 90),
-    (["led driver", "led array", "multiple led"], "led_array_driver", 90),
-    (["led", "diode", "indicator", "resistor led"], "led_resistor", 70),
-    (["opamp buffer", "unity gain buffer", "voltage follower"], "opamp_buffer", 90),
-    (["opamp", "op-amp", "operational amplifier", "gain"], "opamp_general", 70),
-    (["mosfet switch", "high side switch", "low side switch"], "mosfet_switch", 90),
-    (["mosfet", "nmos", "pmos", "transistor switch"], "mosfet_general", 70),
-    (["rc filter", "low pass filter", "high pass filter"], "rc_filter", 80),
-    (["voltage divider", "resistor divider"], "voltage_divider", 75),
-    (["crystal oscillator", "quartz", "mhz crystal"], "crystal_oscillator", 85),
-    (["usb power", "usb protection", "usb esd"], "usb_protection", 90),
+    (["555", "timer", "blink", "astable", "multivibrator"],   "555_timer",            80),
+    (["3.3v regulator", "3v3 ldo", "ams1117-3.3"],            "3v3_regulator_ldo",    100),
+    (["3.3v", "3v3", "ams1117", "ldo", "voltage regulator"], "3v3_regulator",        80),
+    (["5v regulator", "5v ldo", "7805", "5v power"],          "5v_regulator",         90),
+    (["led driver", "led array", "multiple led"],              "led_array_driver",     90),
+    (["led", "diode", "indicator", "resistor led"],            "led_resistor",         70),
+    (["opamp buffer", "unity gain buffer", "voltage follower"],"opamp_buffer",         90),
+    (["opamp", "op-amp", "operational amplifier", "gain"],    "opamp_general",        70),
+    (["mosfet switch", "high side switch", "low side switch"],"mosfet_switch",        90),
+    (["mosfet", "nmos", "pmos", "transistor switch"],         "mosfet_general",       70),
+    (["rc filter", "low pass filter", "high pass filter"],    "rc_filter",            80),
+    (["voltage divider", "resistor divider"],                  "voltage_divider",      75),
+    (["crystal oscillator", "quartz", "mhz crystal"],         "crystal_oscillator",   85),
+    (["usb power", "usb protection", "usb esd"],              "usb_protection",       90),
 ]
 
-# ── Pydantic Models ───────────────────────────────────────────────────────────
+# ── Known KiCad power/virtual symbol prefixes to skip in ref validation ───────
+_POWER_SYMBOL_RE = re.compile(r'^#(PWR|FLG|GND|VCC|VDD)\d*$', re.IGNORECASE)
+
+# ── Pydantic models ───────────────────────────────────────────────────────────
 
 class PinRef(BaseModel):
-    """Reference to a specific pin on a component."""
+    """Reference to a specific pin on a component.
+
+    KiCad refs can be: R1, C12, U3, #PWR01, SW1, LED1, TP1, J2, CONN1 …
+    The previous strict pattern r'^[A-Z]{1,3}[0-9]+$' rejected most of these.
+    """
     model_config = ConfigDict(frozen=True)
-    
-    ref: str = Field(..., pattern=r'^[A-Z]{1,3}[0-9]+$', description="Component reference")
-    pin: str = Field(..., pattern=r'^[0-9A-Za-z]+$', description="Pin number/name")
-    
+
+    ref: str = Field(..., min_length=1, max_length=32)
+    pin: str = Field(..., min_length=1, max_length=16)
+
     def __str__(self) -> str:
         return f"{self.ref}.{self.pin}"
-    
+
     @property
     def component_prefix(self) -> str:
-        """Extract component type prefix."""
-        match = re.match(r'^([A-Z][A-Z]?)', self.ref)
-        return match.group(1) if match else "U"
+        m = re.match(r'^#?([A-Z]+)', self.ref)
+        return m.group(1) if m else "U"
 
 
 class NetProperties(BaseModel):
-    """Electrical properties of a net."""
     net_type: Literal["power", "ground", "signal", "clock", "differential", "analog"] = "signal"
-    voltage: Optional[float] = Field(default=None, description="Nominal voltage")
-    current_max: Optional[float] = Field(default=None, description="Max current in A")
-    frequency: Optional[float] = Field(default=None, description="Frequency in Hz")
-    impedance_ohms: Optional[float] = Field(default=None)
-    length_mm: Optional[float] = Field(default=None)
-    is_critical: bool = Field(default=False)
+    voltage:       Optional[float] = None
+    current_max:   Optional[float] = None
+    frequency:     Optional[float] = None
+    impedance_ohms: Optional[float] = None
+    length_mm:     Optional[float] = None
+    is_critical:   bool = False
 
 
 class BoardConnection(BaseModel):
-    """A net with all connected pins."""
+    """A named net with all connected pin references."""
     model_config = ConfigDict(frozen=True)
-    
-    net: str = Field(..., min_length=1, max_length=100)
-    pins: List[PinRef] = Field(..., min_length=2)
-    properties: NetProperties = Field(default_factory=NetProperties)
-    
-    @field_validator('pins')
+
+    net:        str            = Field(..., min_length=1, max_length=100)
+    pins:       List[PinRef]   = Field(..., min_length=2)
+    properties: NetProperties  = Field(default_factory=NetProperties)
+
+    @field_validator("pins")
     @classmethod
     def validate_unique_pins(cls, v: List[PinRef]) -> List[PinRef]:
-        seen = set()
+        seen: Set[str] = set()
         for pin in v:
             key = str(pin)
             if key in seen:
                 raise ValueError(f"Duplicate pin in net: {key}")
             seen.add(key)
         return v
-    
+
     @property
     def components(self) -> Set[str]:
-        """Get unique component references in this net."""
         return {p.ref for p in self.pins}
-    
+
     def has_component(self, ref: str) -> bool:
-        """Check if component is in this net."""
         return any(p.ref == ref for p in self.pins)
 
 
 class ComponentData(BaseModel):
-    """Component with placement and physical properties."""
-    ref: str = Field(..., pattern=r'^[A-Z]{1,3}[0-9]+$')
-    value: str = Field(..., min_length=1)
-    footprint: str = Field(default="", description="KiCad footprint")
-    x: float = Field(..., ge=-1000, le=1000)
-    y: float = Field(..., ge=-1000, le=1000)
-    rotation: float = Field(default=0.0, ge=-360, le=360)
-    layer: Literal["top", "bottom", "F.Cu", "B.Cu"] = "top"
-    height_mm: Optional[float] = Field(default=None, ge=0, le=50)
-    power_dissipation_mw: Optional[float] = Field(default=None, ge=0)
-    is_polarized: bool = Field(default=False)
+    """Component with placement and physical properties.
 
-    @model_validator(mode='before')
+    NOTE: model_config frozen=False is required so PlacementOptimizer can
+    update x/y after auto-placement without reconstructing the entire object.
+    """
+    model_config = ConfigDict(frozen=False)
+
+    # KiCad refs: R1, C12, U3, J1, SW1, LED1, TP1, #PWR01, PWR_FLAG …
+    ref:       str   = Field(..., min_length=1, max_length=32)
+    value:     str   = Field(..., min_length=1)
+    footprint: str   = Field(default="")
+    x:         float = Field(default=0.0, ge=-1000, le=1000)
+    y:         float = Field(default=0.0, ge=-1000, le=1000)
+    rotation:  float = Field(default=0.0, ge=-360, le=360)
+    layer:     str   = Field(default="top")
+    height_mm:             Optional[float] = Field(default=None, ge=0, le=50)
+    power_dissipation_mw:  Optional[float] = Field(default=None, ge=0)
+    is_polarized:          bool            = False
+
+    @model_validator(mode="before")
     @classmethod
     def flatten_position(cls, values: Any) -> Any:
-        """Accept both flat {x, y} and nested {position: {x, y}} formats."""
-        if isinstance(values, dict) and 'position' in values and 'x' not in values:
-            pos = values['position']
-            if isinstance(pos, dict):
-                values = {**values, 'x': pos.get('x', 0.0), 'y': pos.get('y', 0.0)}
+        """Accept flat {x,y} or nested {position:{x,y}} or missing coords."""
+        if isinstance(values, dict):
+            if "position" in values and "x" not in values:
+                pos = values["position"]
+                if isinstance(pos, dict):
+                    values = {**values, "x": pos.get("x", 0.0), "y": pos.get("y", 0.0)}
+            values.setdefault("x", 0.0)
+            values.setdefault("y", 0.0)
         return values
-    
-    @field_validator('layer')
+
+    @field_validator("layer")
     @classmethod
     def normalize_layer(cls, v: str) -> str:
-        mapping = {"F.Cu": "top", "B.Cu": "bottom", "top": "top", "bottom": "bottom"}
-        return mapping.get(v, "top")
-    
+        return {"F.Cu": "top", "B.Cu": "bottom"}.get(v, v if v in ("top", "bottom") else "top")
+
     @property
     def prefix(self) -> str:
-        """Get component prefix (R, C, U, etc.)."""
-        match = re.match(r'^([A-Z][A-Z]?)', self.ref)
-        return match.group(1) if match else "U"
-    
+        m = re.match(r'^#?([A-Z]+)', self.ref)
+        return m.group(1) if m else "U"
+
     @property
     def is_ic(self) -> bool:
-        """Check if integrated circuit."""
-        return self.prefix in ["U", "IC", "Q"]
-    
+        return self.prefix in {"U", "IC"}
+
     @property
     def is_passive(self) -> bool:
-        """Check if passive component."""
-        return self.prefix in ["R", "C", "L", "F"]
-    
+        return self.prefix in {"R", "C", "L", "F"}
+
     @property
     def is_connector(self) -> bool:
-        """Check if connector."""
-        return self.prefix in ["J", "P", "CONN"]
+        return self.prefix in {"J", "P", "CONN"}
+
+    @property
+    def is_power_symbol(self) -> bool:
+        """KiCad virtual power / flag symbols – excluded from DFM component checks."""
+        return bool(_POWER_SYMBOL_RE.match(self.ref))
 
 
 class BoardData(BaseModel):
-    """Complete board description with netlist."""
-    components: List[ComponentData]
-    connections: List[BoardConnection] = Field(default_factory=list)
-    board_width: float = Field(default=100.0, gt=0, le=1000)
-    board_height: float = Field(default=80.0, gt=0, le=1000)
+    """Complete board description with optional netlist."""
+    components:   List[ComponentData]  = Field(default_factory=list)
+    connections:  List[BoardConnection] = Field(default_factory=list)
+    board_width:  float = Field(default=100.0, gt=0, le=1000)
+    board_height: float = Field(default=80.0,  gt=0, le=1000)
     design_rules: Dict[str, float] = Field(default_factory=dict)
-    
-    @model_validator(mode='after')
-    def validate_references(self) -> 'BoardData':
-        """Ensure all net references point to existing components."""
+
+    @model_validator(mode="after")
+    def soft_validate_references(self) -> "BoardData":
+        """
+        Warn (log) rather than raise when a net references a component not in
+        the components list.  KiCad sends power symbols (#PWR01, PWR_FLAG) in
+        netlist connections but does not include them as placeable components –
+        raising an error here would cause every plugin DFM/placement call to
+        fail with 422 Unprocessable Entity.
+        """
         comp_refs = {c.ref for c in self.components}
-        
         for conn in self.connections:
             for pin in conn.pins:
-                if pin.ref not in comp_refs:
-                    raise ValueError(f"Net '{conn.net}' references unknown component '{pin.ref}'")
-        
+                if pin.ref not in comp_refs and not _POWER_SYMBOL_RE.match(pin.ref):
+                    logger.warning(
+                        "Net '%s' references unknown component '%s' – ignored in analysis",
+                        conn.net, pin.ref,
+                    )
         return self
-    
+
     def get_component(self, ref: str) -> Optional[ComponentData]:
-        """Get component by reference."""
         for c in self.components:
             if c.ref == ref:
                 return c
         return None
-    
+
     def get_nets_for_component(self, ref: str) -> List[BoardConnection]:
-        """Get all nets connected to a component."""
         return [c for c in self.connections if c.has_component(ref)]
-    
+
     def build_graph(self) -> Optional[Any]:
-        """Build NetworkX graph of connectivity."""
-        if not NETWORKX_AVAILABLE:
+        if not _NX:
             return None
-        
         G = nx.Graph()
-        
-        # Add component nodes
         for comp in self.components:
-            G.add_node(comp.ref, **comp.model_dump())
-        
-        # Add edges for connections
+            G.add_node(comp.ref, data=comp)
         for conn in self.connections:
             pins = conn.pins
-            # Connect all pins in net as a clique
-            for i, pin1 in enumerate(pins):
-                for pin2 in pins[i+1:]:
-                    G.add_edge(pin1.ref, pin2.ref, net=conn.net, properties=conn.properties)
-        
+            for i, p1 in enumerate(pins):
+                for p2 in pins[i + 1:]:
+                    G.add_edge(p1.ref, p2.ref, net=conn.net)
         return G
 
 
 class DFMViolation(BaseModel):
-    """Detailed DFM violation with fix suggestions."""
-    rule_id: str = Field(..., pattern=r'^DFM-[A-Z]{3}-\d{3}$')
-    type: str
-    severity: Literal["info", "warning", "error", "critical"]
-    message: str
-    components: List[str] = Field(default_factory=list)
-    nets: List[str] = Field(default_factory=list)
-    location: Optional[Dict[str, float]] = None
-    suggested_fix: Optional[str] = None
-    estimated_cost_impact: Optional[str] = None  # "low", "medium", "high"
-
-
-class PlacementOptimization(BaseModel):
-    """Metrics for placement optimization."""
-    algorithm: str
-    wirelength_mm: float
-    density_uniformity: float  # 0-1, higher is better
-    power_integrity_score: float  # 0-100
-    thermal_score: float  # 0-100
-    iterations: int
-    convergence_delta: float
+    rule_id:             str  = Field(..., pattern=r'^DFM-[A-Z]{2,4}-\d{3}$')
+    type:                str
+    severity:            Literal["info", "warning", "error", "critical"]
+    message:             str
+    components:          List[str]  = Field(default_factory=list)
+    nets:                List[str]  = Field(default_factory=list)
+    location:            Optional[Dict[str, float]] = None
+    suggested_fix:       Optional[str] = None
+    estimated_cost_impact: Optional[Literal["low", "medium", "high"]] = None
 
 
 class HealthResponse(BaseModel):
-    status: str
-    version: str
-    uptime_seconds: float
-    models_loaded: bool
-    llm_loaded: bool = False
-    placement_engine_loaded: bool = False
-    templates_available: int = 0
-    capabilities: List[str] = Field(default_factory=list)
+    status:                  str
+    version:                 str
+    uptime_seconds:          float
+    models_loaded:           bool
+    llm_loaded:              bool  = False
+    placement_engine_loaded: bool  = False
+    templates_available:     int   = 0
+    capabilities:            List[str] = Field(default_factory=list)
 
 
 class GenerateRequest(BaseModel):
-    prompt: str = Field(..., min_length=1, max_length=5000)
+    prompt:      str  = Field(..., min_length=1, max_length=5000)
     constraints: Optional[Dict[str, Any]] = None
-    priority: Literal["speed", "quality", "compact"] = "quality"
+    priority:    Literal["speed", "quality", "compact"] = "quality"
 
 
 class GenerateResponse(BaseModel):
-    success: bool
-    circuit_data: Optional[Dict[str, Any]] = None
-    template_used: Optional[str] = None
-    generation_time_ms: float = 0
-    warnings: List[str] = Field(default_factory=list)
-    error: Optional[str] = None
-    request_id: str = Field(default_factory=lambda: str(uuid.uuid4())[:8])
+    success:          bool
+    circuit_data:     Optional[Dict[str, Any]] = None
+    template_used:    Optional[str]  = None
+    generation_time_ms: float        = 0.0
+    warnings:         List[str]      = Field(default_factory=list)
+    error:            Optional[str]  = None
+    request_id:       str            = Field(default_factory=lambda: str(uuid.uuid4())[:8])
+    output_file:      Optional[str]  = None   # filename inside output/
+    download_url:     Optional[str]  = None   # /download/<filename>
+
+
+class SchematicRequest(BaseModel):
+    prompt: str = Field(..., min_length=1, max_length=5000)
+
+
+class SchematicResponse(BaseModel):
+    success:         bool
+    component_count: int         = 0
+    output_file:     Optional[str] = None
+    download_url:    Optional[str] = None
+    error:           Optional[str] = None
 
 
 # ── Application State ─────────────────────────────────────────────────────────
 
 class AppState:
-    def __init__(self):
-        self.llm: Any = None
-        self.rl_model: Any = None
-        self.dfm_engine: Any = None
+    def __init__(self) -> None:
+        self.llm:            Any              = None
+        self.rl_model:       Any              = None
         self.template_cache: Dict[str, Dict] = {}
-        self.start_time: float = time.time()
-        self.request_count: int = 0
-        self.circuit_graphs: Dict[str, Any] = {}  # Cache for circuit graphs
-    
+        self.start_time:     float            = time.time()
+
     @property
     def uptime_seconds(self) -> float:
         return time.time() - self.start_time
-    
+
+    @property
+    def models_loaded(self) -> bool:
+        return self.llm is not None or self.rl_model is not None
+
     def get_capabilities(self) -> List[str]:
-        caps = ["basic_dfm", "netlist_analysis"]
-        if self.llm:
-            caps.append("llm_generation")
-        if self.rl_model:
-            caps.append("rl_placement")
-        if self.dfm_engine:
-            caps.append("advanced_dfm")
-        if NETWORKX_AVAILABLE:
-            caps.append("graph_analysis")
+        caps = ["basic_dfm", "netlist_analysis", "template_matching"]
+        if self.llm:        caps.append("llm_generation")
+        if self.rl_model:   caps.append("rl_placement")
+        if _NX:             caps.append("graph_analysis")
+        if _NP:             caps.append("force_directed_placement")
         return caps
+
 
 _state = AppState()
 
-# ── Spatial Index for Performance ─────────────────────────────────────────────
+
+# ── Spatial Index ─────────────────────────────────────────────────────────────
 
 class SpatialIndex:
-    """Grid-based spatial index for O(1) neighbor queries."""
-    
-    def __init__(self, cell_size: float = CONFIG.SPATIAL_GRID_SIZE_MM):
+    """Grid-based spatial index for O(1) average-case neighbour queries."""
+
+    def __init__(self, cell_size: float = SPATIAL_GRID_SIZE_MM) -> None:
         self.cell_size = cell_size
-        self.grid: Dict[Tuple[int, int], List[ComponentData]] = defaultdict(list)
-        self.component_cells: Dict[str, Tuple[int, int]] = {}
-    
+        self.grid:            Dict[Tuple[int, int], List[ComponentData]] = defaultdict(list)
+        self.component_cells: Dict[str, Tuple[int, int]]                = {}
+
+    def _cell(self, x: float, y: float) -> Tuple[int, int]:
+        return int(x / self.cell_size), int(y / self.cell_size)
+
     def insert(self, component: ComponentData) -> None:
-        """Insert component into spatial index."""
-        cell_x = int(component.x / self.cell_size)
-        cell_y = int(component.y / self.cell_size)
-        self.grid[(cell_x, cell_y)].append(component)
-        self.component_cells[component.ref] = (cell_x, cell_y)
-    
-    def query_neighbors(self, component: ComponentData, radius: float) -> List[ComponentData]:
-        """Find all components within radius."""
+        cell = self._cell(component.x, component.y)
+        self.grid[cell].append(component)
+        self.component_cells[component.ref] = cell
+
+    # NOTE: return type is List[Tuple[ComponentData, float]] – the previous
+    # annotation List[ComponentData] was wrong and broke callers that unpacked
+    # (other, distance) tuples.
+    def query_neighbors(
+        self, component: ComponentData, radius: float
+    ) -> List[Tuple[ComponentData, float]]:
         cell_radius = int(radius / self.cell_size) + 1
-        cell_x, cell_y = self.component_cells.get(component.ref, (0, 0))
-        
-        neighbors = []
+        cx, cy = self.component_cells.get(component.ref, self._cell(component.x, component.y))
+
+        neighbors: List[Tuple[ComponentData, float]] = []
         for dx in range(-cell_radius, cell_radius + 1):
             for dy in range(-cell_radius, cell_radius + 1):
-                cell = (cell_x + dx, cell_y + dy)
-                for other in self.grid.get(cell, []):
-                    if other.ref != component.ref:
-                        dist = math.hypot(component.x - other.x, component.y - other.y)
-                        if dist <= radius:
-                            neighbors.append((other, dist))
-        
+                for other in self.grid.get((cx + dx, cy + dy), []):
+                    if other.ref == component.ref:
+                        continue
+                    dist = math.hypot(component.x - other.x, component.y - other.y)
+                    if dist <= radius:
+                        neighbors.append((other, dist))
         return neighbors
-    
-    def query_region(self, x: float, y: float, width: float, height: float) -> List[ComponentData]:
-        """Query all components in rectangular region."""
-        min_x, max_x = int(x / self.cell_size), int((x + width) / self.cell_size)
-        min_y, max_y = int(y / self.cell_size), int((y + height) / self.cell_size)
-        
-        results = []
-        for cx in range(min_x, max_x + 1):
-            for cy in range(min_y, max_y + 1):
-                results.extend(self.grid.get((cx, cy), []))
-        
-        return results
 
 
 # ── Advanced DFM Engine ───────────────────────────────────────────────────────
 
 class AdvancedDFMEngine:
-    """Comprehensive DFM analysis with netlist awareness."""
-    
-    POWER_NET_NAMES: Set[str] = {
-        'VCC', 'VDD', '3V3', '3.3V', '5V', '1V8', '1.8V', '12V', '24V',
-        'VPWR', 'VSUP', 'AVCC', 'DVCC', 'VCCIO', 'VCCINT'
+    """Full netlist-aware DFM analysis engine."""
+
+    POWER_NETS: Set[str] = {
+        "VCC", "VDD", "3V3", "3.3V", "5V", "1V8", "1.8V", "12V", "24V",
+        "VPWR", "VSUP", "AVCC", "DVCC", "VCCIO", "VCCINT",
     }
-    
-    GROUND_NET_NAMES: Set[str] = {
-        'GND', 'VSS', 'AGND', 'DGND', 'PGND', 'SGND', 'VEE', 'VSSA', 'VSSD'
+    GROUND_NETS: Set[str] = {
+        "GND", "VSS", "AGND", "DGND", "PGND", "SGND", "VEE", "VSSA", "VSSD",
     }
-    
-    def __init__(self, board: BoardData):
-        self.board = board
+    # Standard rotation angles for polarised components (degrees, normalised 0–360)
+    STANDARD_ANGLES: Set[float] = {0.0, 90.0, 180.0, 270.0}
+    ANGLE_TOL = 0.5  # degrees – tolerates floating-point imprecision
+
+    def __init__(self, board: BoardData) -> None:
+        self.board      = board
         self.violations: List[DFMViolation] = []
-        self.spatial_index = SpatialIndex()
+
+        # Only index real, placeable components – skip power symbols
+        self.spatial = SpatialIndex()
         for comp in board.components:
-            self.spatial_index.insert(comp)
-        
-        # Build net lookup
-        self.net_pins: Dict[str, List[PinRef]] = {}
-        self.component_nets: Dict[str, List[str]] = defaultdict(list)
+            if not comp.is_power_symbol:
+                self.spatial.insert(comp)
+
+        # Build reverse-lookup maps
+        self.net_pins:       Dict[str, List[PinRef]] = {}
+        self.component_nets: Dict[str, List[str]]    = defaultdict(list)
         for conn in board.connections:
-            self.net_pins[conn.net] = conn.pins
+            self.net_pins[conn.net] = list(conn.pins)
             for pin in conn.pins:
                 self.component_nets[pin.ref].append(conn.net)
-    
+
+    # ── Public entry point ────────────────────────────────────────────────────
+
     def analyze(self) -> List[DFMViolation]:
-        """Run complete DFM analysis."""
+        """Run all checks and return violations sorted by severity."""
         self._check_component_spacing()
         self._check_board_boundaries()
         self._check_orientation()
         self._check_power_integrity()
         self._check_signal_integrity()
         self._check_thermal()
-        self._check_silkscreen()
-        self._check_floating_pins()
+        self._check_floating_components()
         self._check_net_lengths()
-        
-        return sorted(self.violations, key=lambda v: {
-            "critical": 0, "error": 1, "warning": 2, "info": 3
-        }.get(v.severity, 4))
-    
+        return sorted(
+            self.violations,
+            key=lambda v: {"critical": 0, "error": 1, "warning": 2, "info": 3}.get(v.severity, 4),
+        )
+
+    # ── Individual checks ─────────────────────────────────────────────────────
+
     def _check_component_spacing(self) -> None:
-        """Advanced spacing with netlist awareness (skip check for connected components)."""
-        checked_pairs = set()
-        
+        checked: Set[Tuple[str, str]] = set()
+
         for comp in self.board.components:
-            # Query potential neighbors
-            neighbors = self.spatial_index.query_neighbors(comp, CONFIG.DFM_MIN_SPACING_MM * 2)
-            
-            for other, distance in neighbors:
-                pair_key = tuple(sorted([comp.ref, other.ref]))
-                if pair_key in checked_pairs:
+            if comp.is_power_symbol:
+                continue
+            for other, dist in self.spatial.query_neighbors(comp, DFM_MIN_SPACING_MM * 3):
+                pair = tuple(sorted((comp.ref, other.ref)))
+                if pair in checked:
                     continue
-                checked_pairs.add(pair_key)
-                
-                # Skip if components are electrically connected (intentionally close)
+                checked.add(pair)  # type: ignore[arg-type]
+
+                # Intentionally-adjacent connected components are allowed to be close
                 if self._are_connected(comp.ref, other.ref):
                     continue
-                
-                # Check actual spacing requirement based on component types
-                required_spacing = self._get_required_spacing(comp, other)
-                
-                if distance < required_spacing:
+
+                required = self._required_spacing(comp, other)
+                if dist < required:
                     self.violations.append(DFMViolation(
                         rule_id="DFM-SPC-001",
                         type="component_spacing",
-                        severity="error" if distance < required_spacing * 0.5 else "warning",
-                        message=f"{comp.ref} and {other.ref} too close ({distance:.2f}mm < {required_spacing}mm)",
+                        severity="error" if dist < required * 0.5 else "warning",
+                        message=(
+                            f"{comp.ref} and {other.ref} are too close "
+                            f"({dist:.2f} mm < {required:.1f} mm required)"
+                        ),
                         components=[comp.ref, other.ref],
                         location={"x": (comp.x + other.x) / 2, "y": (comp.y + other.y) / 2},
-                        suggested_fix=f"Move {other.ref} away by {required_spacing - distance:.1f}mm or verify electrical connection",
-                        estimated_cost_impact="high" if distance < required_spacing * 0.5 else "medium"
+                        suggested_fix=f"Increase separation by {required - dist:.1f} mm",
+                        estimated_cost_impact="high" if dist < required * 0.5 else "medium",
                     ))
-    
-    def _get_required_spacing(self, c1: ComponentData, c2: ComponentData) -> float:
-        """Calculate required spacing based on component characteristics."""
-        base = CONFIG.DFM_MIN_SPACING_MM
-        
-        # High voltage requires more space
-        if c1.power_dissipation_mw and c1.power_dissipation_mw > 1000:
-            base += 1.0
-        if c2.power_dissipation_mw and c2.power_dissipation_mw > 1000:
-            base += 1.0
-        
-        # Tall components need keepout
-        if c1.height_mm and c1.height_mm > 10:
-            base += 2.0
-        if c2.height_mm and c2.height_mm > 10:
-            base += 2.0
-        
-        # Connectors need access space
-        if c1.is_connector or c2.is_connector:
-            base += 1.5
-        
+
+    def _required_spacing(self, c1: ComponentData, c2: ComponentData) -> float:
+        base = DFM_MIN_SPACING_MM
+        for c in (c1, c2):
+            if c.power_dissipation_mw and c.power_dissipation_mw > 1000:
+                base += 1.0
+            if c.height_mm and c.height_mm > 10:
+                base += 2.0
+            if c.is_connector:
+                base += 1.5
         return base
-    
+
     def _check_board_boundaries(self) -> None:
-        """Check component placement relative to board edges."""
-        margin = CONFIG.DFM_EDGE_CLEARANCE_MM
-        
         for comp in self.board.components:
-            bbox = self._get_bounding_box(comp)
-            
+            if comp.is_power_symbol:
+                continue
+            bb = self._bounding_box(comp)
             checks = [
-                (bbox["x"] < margin, "left", margin - bbox["x"]),
-                (bbox["x"] + bbox["w"] > self.board.board_width - margin, "right", 
-                 bbox["x"] + bbox["w"] - (self.board.board_width - margin)),
-                (bbox["y"] < margin, "bottom", margin - bbox["y"]),
-                (bbox["y"] + bbox["h"] > self.board.board_height - margin, "top",
-                 bbox["y"] + bbox["h"] - (self.board.board_height - margin))
+                (bb["x"] < DFM_EDGE_CLEARANCE_MM,
+                 "left",  DFM_EDGE_CLEARANCE_MM - bb["x"]),
+                (bb["x"] + bb["w"] > self.board.board_width - DFM_EDGE_CLEARANCE_MM,
+                 "right", bb["x"] + bb["w"] - (self.board.board_width - DFM_EDGE_CLEARANCE_MM)),
+                (bb["y"] < DFM_EDGE_CLEARANCE_MM,
+                 "bottom", DFM_EDGE_CLEARANCE_MM - bb["y"]),
+                (bb["y"] + bb["h"] > self.board.board_height - DFM_EDGE_CLEARANCE_MM,
+                 "top", bb["y"] + bb["h"] - (self.board.board_height - DFM_EDGE_CLEARANCE_MM)),
             ]
-            
             for violated, edge, overflow in checks:
                 if violated:
                     self.violations.append(DFMViolation(
                         rule_id="DFM-BND-001",
                         type="board_boundary",
                         severity="error",
-                        message=f"{comp.ref} violates {edge} edge clearance ({overflow:.1f}mm)",
+                        message=f"{comp.ref} violates {edge} edge clearance by {overflow:.1f} mm",
                         components=[comp.ref],
                         location={"x": comp.x, "y": comp.y},
-                        suggested_fix=f"Move {comp.ref} inward by {overflow + 0.5:.1f}mm"
+                        suggested_fix=f"Move {comp.ref} inward by at least {overflow + 0.5:.1f} mm",
                     ))
-    
+
     def _check_orientation(self) -> None:
-        """Check for polarized components with suspicious rotation values."""
         for comp in self.board.components:
-            rot = comp.rotation % 360
-            if comp.is_polarized and rot not in (0.0, 90.0, 180.0, 270.0):
+            if not comp.is_polarized or comp.is_power_symbol:
+                continue
+            # Normalise to 0–360 and use a tolerance for float comparison
+            normalised = comp.rotation % 360
+            on_standard = any(
+                abs(normalised - angle) < self.ANGLE_TOL
+                or abs(normalised - angle - 360) < self.ANGLE_TOL
+                for angle in self.STANDARD_ANGLES
+            )
+            if not on_standard:
                 self.violations.append(DFMViolation(
                     rule_id="DFM-ORI-001",
                     type="orientation",
                     severity="warning",
                     message=(
-                        f"{comp.ref} is polarized with non-standard rotation "
-                        f"({comp.rotation:.1f}°) — verify orientation"
+                        f"{comp.ref} is polarised with non-standard rotation "
+                        f"({comp.rotation:.1f}°) – verify assembly orientation"
                     ),
                     components=[comp.ref],
                     location={"x": comp.x, "y": comp.y},
-                    suggested_fix=f"Rotate {comp.ref} to 0°, 90°, 180°, or 270°"
+                    suggested_fix=f"Snap {comp.ref} to 0 °, 90 °, 180 °, or 270 °",
                 ))
 
     def _check_power_integrity(self) -> None:
-        ics = [c for c in self.board.components if c.is_ic]
-        
-        for ic in ics:
+        for ic in self.board.components:
+            if not ic.is_ic:
+                continue
             ic_nets = set(self.component_nets.get(ic.ref, []))
-            power_nets = ic_nets & self.POWER_NET_NAMES
-            ground_nets = ic_nets & self.GROUND_NET_NAMES
-            
+            power_nets  = ic_nets & self.POWER_NETS
+            ground_nets = ic_nets & self.GROUND_NETS
+
             if not power_nets:
                 self.violations.append(DFMViolation(
                     rule_id="DFM-PWR-001",
                     type="power_connection",
                     severity="error",
-                    message=f"{ic.ref} has no power net connection",
+                    message=f"{ic.ref} has no power supply net connected",
                     components=[ic.ref],
-                    location={"x": ic.x, "y": ic.y}
+                    location={"x": ic.x, "y": ic.y},
                 ))
                 continue
-            
+
             if not ground_nets:
                 self.violations.append(DFMViolation(
                     rule_id="DFM-PWR-002",
                     type="ground_connection",
                     severity="error",
-                    message=f"{ic.ref} has no ground connection",
+                    message=f"{ic.ref} has no ground net connected",
                     components=[ic.ref],
-                    location={"x": ic.x, "y": ic.y}
+                    location={"x": ic.x, "y": ic.y},
                 ))
                 continue
-            
-            # Check decoupling for each power pin
+
             for pwr_net in power_nets:
                 self._check_decoupling(ic, pwr_net, ground_nets)
-    
-    def _check_decoupling(self, ic: ComponentData, pwr_net: str, gnd_nets: Set[str]) -> None:
-        """Verify adequate decoupling capacitors near IC."""
-        # Find caps on this power net
-        decoupling_candidates = []
-        
+
+    def _check_decoupling(
+        self, ic: ComponentData, pwr_net: str, gnd_nets: Set[str]
+    ) -> None:
+        candidates: List[Tuple[ComponentData, float]] = []
+
         for comp in self.board.components:
-            if not comp.ref.startswith('C'):
+            if not comp.ref.startswith("C"):
                 continue
-            
             comp_nets = set(self.component_nets.get(comp.ref, []))
-            
-            # Capacitor must connect power and ground
-            if pwr_net in comp_nets and (comp_nets & gnd_nets):
-                dist = math.hypot(comp.x - ic.x, comp.y - ic.y)
-                decoupling_candidates.append((comp, dist))
-        
-        if not decoupling_candidates:
+            if pwr_net in comp_nets and comp_nets & gnd_nets:
+                candidates.append((comp, math.hypot(comp.x - ic.x, comp.y - ic.y)))
+
+        if not candidates:
             self.violations.append(DFMViolation(
                 rule_id="DFM-PWR-003",
                 type="missing_decoupling",
                 severity="warning",
-                message=f"{ic.ref} lacks decoupling capacitor on {pwr_net}",
+                message=f"{ic.ref} has no decoupling capacitor on net {pwr_net}",
                 components=[ic.ref],
                 nets=[pwr_net],
                 location={"x": ic.x, "y": ic.y},
-                suggested_fix=f"Add 100nF ceramic capacitor within {CONFIG.DFM_DECOUPLING_MAX_DISTANCE_MM}mm of {ic.ref}"
+                suggested_fix=(
+                    f"Add 100 nF ceramic capacitor within "
+                    f"{DFM_DECOUPLING_MAX_DIST_MM} mm of {ic.ref}"
+                ),
             ))
             return
-        
-        # Check distance of closest cap
-        decoupling_candidates.sort(key=lambda x: x[1])
-        closest_cap, closest_dist = decoupling_candidates[0]
-        
-        if closest_dist > CONFIG.DFM_DECOUPLING_MAX_DISTANCE_MM:
+
+        closest_cap, closest_dist = min(candidates, key=lambda t: t[1])
+        if closest_dist > DFM_DECOUPLING_MAX_DIST_MM:
             self.violations.append(DFMViolation(
                 rule_id="DFM-PWR-004",
                 type="decoupling_distance",
                 severity="warning",
-                message=f"Decoupling cap {closest_cap.ref} for {ic.ref} is too far ({closest_dist:.1f}mm)",
+                message=(
+                    f"Decoupling cap {closest_cap.ref} for {ic.ref} is too far "
+                    f"({closest_dist:.1f} mm > {DFM_DECOUPLING_MAX_DIST_MM} mm)"
+                ),
                 components=[ic.ref, closest_cap.ref],
                 nets=[pwr_net],
                 location={"x": ic.x, "y": ic.y},
-                suggested_fix=f"Move {closest_cap.ref} closer to {ic.ref} or add additional capacitor"
+                suggested_fix=f"Move {closest_cap.ref} closer to {ic.ref}",
             ))
-        
-        # Check for bulk capacitance if IC is high power
+
         if ic.power_dissipation_mw and ic.power_dissipation_mw > 500:
-            bulk_caps = [c for c, d in decoupling_candidates if c.value and 
-                        any(unit in c.value.upper() for unit in ['UF', 'MF', 'µF'])]
-            if not bulk_caps:
+            bulk = [
+                c for c, _ in candidates
+                if c.value and any(u in c.value.upper() for u in ("UF", "µF", "MF"))
+            ]
+            if not bulk:
                 self.violations.append(DFMViolation(
                     rule_id="DFM-PWR-005",
                     type="missing_bulk_capacitance",
                     severity="info",
-                    message=f"High-power IC {ic.ref} may need bulk capacitance (>1µF)",
+                    message=f"High-power IC {ic.ref} may need bulk capacitance (>1 µF)",
                     components=[ic.ref],
-                    nets=[pwr_net]
+                    nets=[pwr_net],
+                    suggested_fix="Add 10 µF electrolytic / tantalum nearby",
                 ))
-    
+
     def _check_signal_integrity(self) -> None:
-        """Analyze high-speed signals and differential pairs."""
         for conn in self.board.connections:
-            props = conn.properties
-            
+            props = conn.properties  # always a NetProperties object
+
+            # High-speed check
+            if props.frequency and props.frequency > 1e6:
+                if props.net_type == "clock" and len(conn.pins) > 3:
+                    self.violations.append(DFMViolation(
+                        rule_id="DFM-SI-001",
+                        type="clock_fanout",
+                        severity="warning",
+                        message=(
+                            f"Clock net '{conn.net}' has high fanout "
+                            f"({len(conn.pins)} loads)"
+                        ),
+                        nets=[conn.net],
+                        suggested_fix="Add a clock buffer or reduce direct connections",
+                    ))
+
+            # Differential pair: ensure both traces are present
             if props.net_type == "differential":
                 self._check_differential_pair(conn)
-            
-            if props.frequency and props.frequency > 1e6:  # > 1MHz
-                self._check_high_speed_signal(conn)
-    
+
     def _check_differential_pair(self, conn: BoardConnection) -> None:
-        """Verify differential pair routing constraints."""
-        # Should have exactly 2 components for a simple diff pair
-        if len(conn.components) != 2:
-            return
-        
-        # Check length matching
-        # This would need actual trace geometry, simplified here
-        pass
-    
-    def _check_high_speed_signal(self, conn: BoardConnection) -> None:
-        """Check for stubs, vias, and length on high-speed nets."""
-        # Simplified check: ensure clock signals don't have many loads
-        if props := conn.properties:
-            if props.net_type == "clock" and len(conn.pins) > 3:
-                self.violations.append(DFMViolation(
-                    rule_id="DFM-SI-001",
-                    type="clock_fanout",
-                    severity="warning",
-                    message=f"Clock net {conn.net} has high fanout ({len(conn.pins)} pins)",
-                    nets=[conn.net],
-                    suggested_fix="Use clock buffer or reduce fanout"
-                ))
-    
+        """Verify differential pairs have exactly 2 driver endpoints."""
+        comps = [p.ref for p in conn.pins]
+        # A diff pair should appear as P and N; if >2 endpoints there is a stub
+        if len(comps) > 4:   # 2 drivers + 2 receivers is the maximum valid case
+            self.violations.append(DFMViolation(
+                rule_id="DFM-SI-002",
+                type="differential_pair_stub",
+                severity="warning",
+                message=(
+                    f"Differential net '{conn.net}' has {len(comps)} pins – "
+                    "stubs degrade signal integrity"
+                ),
+                nets=[conn.net],
+                suggested_fix="Ensure differential pairs are routed as matched-length pairs",
+            ))
+
     def _check_thermal(self) -> None:
-        """Analyze thermal management."""
-        hot_components = [c for c in self.board.components 
-                         if c.power_dissipation_mw and c.power_dissipation_mw > 500]
-        
-        for hot in hot_components:
-            # Check for thermal relief pattern (simplified)
-            neighbors = self.spatial_index.query_neighbors(hot, 5.0)
-            copper_area = sum(1 for _, d in neighbors if d < 3.0)
-            
-            if copper_area < 4:  # Not enough copper nearby for heat spreading
+        hot = [
+            c for c in self.board.components
+            if c.power_dissipation_mw and c.power_dissipation_mw > 500
+        ]
+        for comp in hot:
+            # Count dense neighbours as a proxy for copper density
+            nearby = self.spatial.query_neighbors(comp, 5.0)
+            if len(nearby) < 4:
                 self.violations.append(DFMViolation(
                     rule_id="DFM-THM-001",
                     type="thermal_management",
                     severity="warning",
-                    message=f"{hot.ref} ({hot.power_dissipation_mw}mW) may overheat",
-                    components=[hot.ref],
-                    location={"x": hot.x, "y": hot.y},
-                    suggested_fix="Add thermal vias, copper pour, or heatsink"
+                    message=(
+                        f"{comp.ref} dissipates {comp.power_dissipation_mw:.0f} mW "
+                        "with insufficient surrounding copper area"
+                    ),
+                    components=[comp.ref],
+                    location={"x": comp.x, "y": comp.y},
+                    suggested_fix="Add thermal vias, copper pour, or a heatsink",
                 ))
-    
-    def _check_silkscreen(self) -> None:
-        """Verify silkscreen readability."""
+
+    def _check_floating_components(self) -> None:
+        """Flag ICs and active components that have zero net connections."""
+        connected = {p.ref for conn in self.board.connections for p in conn.pins}
         for comp in self.board.components:
-            # Check for overlapping references (simplified)
-            pass  # Would need actual silkscreen geometry
-    
-    def _check_floating_pins(self) -> None:
-        """Detect unconnected pins on active components."""
-        connected_refs = {p.ref for conn in self.board.connections for p in conn.pins}
-        
-        for comp in self.board.components:
-            if comp.is_ic and comp.ref not in connected_refs:
+            if comp.is_ic and comp.ref not in connected and not comp.is_power_symbol:
                 self.violations.append(DFMViolation(
                     rule_id="DFM-CNN-001",
                     type="floating_component",
                     severity="error",
-                    message=f"{comp.ref} ({comp.value}) has no connections",
+                    message=f"{comp.ref} ({comp.value}) has no electrical connections",
                     components=[comp.ref],
-                    location={"x": comp.x, "y": comp.y}
+                    location={"x": comp.x, "y": comp.y},
+                    suggested_fix="Connect all pins or remove the component",
                 ))
-    
+
     def _check_net_lengths(self) -> None:
-        """Estimate and check net lengths."""
         for conn in self.board.connections:
-            if len(conn.pins) < 2:
+            if len(conn.pins) < 2 or not conn.properties.length_mm:
                 continue
-            
-            # Calculate Manhattan distance between farthest pins
-            max_dist = 0
-            pins = conn.pins
-            for i, p1 in enumerate(pins):
-                comp1 = self.board.get_component(p1.ref)
-                if not comp1:
+            max_dist = 0.0
+            for i, p1 in enumerate(conn.pins):
+                c1 = self.board.get_component(p1.ref)
+                if not c1:
                     continue
-                for p2 in pins[i+1:]:
-                    comp2 = self.board.get_component(p2.ref)
-                    if not comp2:
+                for p2 in conn.pins[i + 1:]:
+                    c2 = self.board.get_component(p2.ref)
+                    if not c2:
                         continue
-                    dist = abs(comp1.x - comp2.x) + abs(comp1.y - comp2.y)
-                    max_dist = max(max_dist, dist)
-            
-            # Check against properties
-            if conn.properties.length_mm and max_dist > conn.properties.length_mm * 1.5:
+                    d = abs(c1.x - c2.x) + abs(c1.y - c2.y)   # Manhattan estimate
+                    max_dist = max(max_dist, d)
+
+            if max_dist > conn.properties.length_mm * 1.5:
                 self.violations.append(DFMViolation(
                     rule_id="DFM-LEN-001",
-                    type="excessive_length",
+                    type="excessive_trace_length",
                     severity="warning",
-                    message=f"Net {conn.net} may be too long ({max_dist:.1f}mm)",
+                    message=(
+                        f"Net '{conn.net}' estimated length {max_dist:.1f} mm "
+                        f"exceeds target {conn.properties.length_mm:.1f} mm"
+                    ),
                     nets=[conn.net],
-                    suggested_fix="Consider moving components closer or termination"
+                    suggested_fix="Move connected components closer or add a termination resistor",
                 ))
-    
+
+    # ── Helpers ───────────────────────────────────────────────────────────────
+
     def _are_connected(self, ref1: str, ref2: str) -> bool:
-        """Check if two components share a net."""
-        nets1 = set(self.component_nets.get(ref1, []))
-        nets2 = set(self.component_nets.get(ref2, []))
-        return bool(nets1 & nets2)
-    
-    def _get_bounding_box(self, comp: ComponentData) -> Dict[str, float]:
-        """Estimate component bounding box."""
-        # Simplified - would use actual footprint data
-        sizes = {"R": 1.6, "C": 1.6, "L": 2.0, "D": 2.0, "U": 5.0, "Q": 3.0, "J": 10.0}
+        n1 = set(self.component_nets.get(ref1, []))
+        n2 = set(self.component_nets.get(ref2, []))
+        return bool(n1 & n2)
+
+    def _bounding_box(self, comp: ComponentData) -> Dict[str, float]:
+        sizes = {"R": 1.6, "C": 1.6, "L": 2.0, "D": 2.0, "U": 5.0,
+                 "Q": 3.0, "J": 10.0, "SW": 6.0, "TP": 2.0}
         size = sizes.get(comp.prefix, 5.0)
-        
-        # Account for rotation
         if comp.rotation % 180 != 0:
-            size *= 1.4  # Diagonal approximation
-        
-        return {
-            "x": comp.x - size/2,
-            "y": comp.y - size/2,
-            "w": size,
-            "h": size
-        }
+            size *= 1.4   # diagonal approximation
+        return {"x": comp.x - size / 2, "y": comp.y - size / 2, "w": size, "h": size}
 
 
-# ── Placement Optimizer ───────────────────────────────────────────────────────
+# ── Placement Optimiser ───────────────────────────────────────────────────────
 
 class PlacementOptimizer:
-    """Advanced placement with connectivity awareness."""
-    
-    def __init__(self, board: BoardData):
-        self.board = board
-        self.graph = board.build_graph()
-    
-    def optimize(self, algorithm: str = "force_directed") -> Dict[str, Any]:
-        """Run placement optimization."""
-        if algorithm == "force_directed":
-            return self._force_directed_placement()
-        elif algorithm == "annealing":
-            return self._simulated_annealing()
-        else:
-            return self._grid_placement()
-    
-    def _force_directed_placement(self) -> Dict[str, Any]:
-        """Force-directed graph placement."""
-        positions = {c.ref: np.array([c.x, c.y]) for c in self.board.components}
-        
-        # Iterative relaxation
-        for iteration in range(100):
-            forces = {ref: np.zeros(2) for ref in positions}
-            
-            # Attractive forces for connected components
-            for conn in self.board.connections:
-                pins = conn.pins
-                for i, p1 in enumerate(pins):
-                    for p2 in pins[i+1:]:
-                        if p1.ref in positions and p2.ref in positions:
-                            pos1, pos2 = positions[p1.ref], positions[p2.ref]
-                            diff = pos2 - pos1
-                            dist = np.linalg.norm(diff)
-                            if dist > 0:
-                                force = diff / dist * (dist - 10) * 0.1  # Spring constant
-                                forces[p1.ref] += force
-                                forces[p2.ref] -= force
-            
-            # Repulsive forces for all components
-            refs = list(positions.keys())
+    """Netlist-aware placement using force-directed or simulated annealing."""
+
+    def __init__(self, board: BoardData) -> None:
+        self.board   = board
+        self.refs    = [c.ref for c in board.components if not c.is_power_symbol]
+        self.graph   = board.build_graph()
+
+        # Adjacency with weights for wire-length cost
+        self.adj: Dict[str, Dict[str, float]] = defaultdict(dict)
+        for conn in board.connections:
+            refs = [p.ref for p in conn.pins if not _POWER_SYMBOL_RE.match(p.ref)]
+            w = 1.0 / max(len(refs), 1)
             for i, r1 in enumerate(refs):
-                for r2 in refs[i+1:]:
-                    diff = positions[r2] - positions[r1]
-                    dist = np.linalg.norm(diff)
-                    if dist < 20 and dist > 0:
-                        force = -diff / dist * (20 - dist) * 0.5
-                        forces[r1] += force
-                        forces[r2] -= force
-            
-            # Apply forces with damping
-            damping = 0.9 - (iteration / 1000)
-            for ref in positions:
-                positions[ref] += forces[ref] * damping
-                
-                # Keep within bounds
-                positions[ref][0] = np.clip(positions[ref][0], 5, self.board.board_width - 5)
-                positions[ref][1] = np.clip(positions[ref][1], 5, self.board.board_height - 5)
-        
-        # Convert back to dict format
-        return {
-            "positions": {
-                ref: {"x": float(pos[0]), "y": float(pos[1]), "rotation": 0}
-                for ref, pos in positions.items()
-            },
-            "algorithm": "force_directed",
-            "iterations": 100
+                for r2 in refs[i + 1:]:
+                    self.adj[r1][r2] = self.adj[r1].get(r2, 0) + w
+                    self.adj[r2][r1] = self.adj[r2].get(r1, 0) + w
+
+    # ── Algorithm dispatcher ──────────────────────────────────────────────────
+
+    def optimize(self, algorithm: str = "force_directed") -> Dict[str, Any]:
+        if algorithm == "force_directed" and _NP:
+            return self._force_directed()
+        if algorithm == "annealing":
+            return self._simulated_annealing()
+        return self._grid_placement()
+
+    # ── Wire-length cost ──────────────────────────────────────────────────────
+
+    def _wire_length(self, positions: Dict[str, Tuple[float, float]]) -> float:
+        total = 0.0
+        for r1, neighbours in self.adj.items():
+            if r1 not in positions:
+                continue
+            for r2, weight in neighbours.items():
+                if r2 not in positions:
+                    continue
+                dx = positions[r1][0] - positions[r2][0]
+                dy = positions[r1][1] - positions[r2][1]
+                total += weight * math.hypot(dx, dy)
+        return total / 2  # each edge counted twice
+
+    # ── Force-directed (requires numpy) ──────────────────────────────────────
+
+    def _force_directed(self) -> Dict[str, Any]:
+        pos: Dict[str, Any] = {
+            ref: np.array([c.x if c.x else random.uniform(10, self.board.board_width - 10),
+                           c.y if c.y else random.uniform(10, self.board.board_height - 10)])
+            for c in self.board.components
+            if not c.is_power_symbol
+            for ref in [c.ref]
         }
-    
+
+        w, h = self.board.board_width, self.board.board_height
+        spring_k, repulse_k = 0.08, 150.0
+
+        for iteration in range(120):
+            forces = {r: np.zeros(2) for r in pos}
+            damping = max(0.05, 0.9 - iteration / 150)
+
+            # Attractive: connected pairs
+            for r1, neighbours in self.adj.items():
+                if r1 not in pos:
+                    continue
+                for r2, weight in neighbours.items():
+                    if r2 not in pos:
+                        continue
+                    diff = pos[r2] - pos[r1]
+                    dist = float(np.linalg.norm(diff)) or 1e-6
+                    ideal = 10.0 * (1 - weight)
+                    f = diff / dist * spring_k * (dist - ideal)
+                    forces[r1] += f
+                    forces[r2] -= f
+
+            # Repulsive: all pairs
+            refs_list = list(pos.keys())
+            for i, r1 in enumerate(refs_list):
+                for r2 in refs_list[i + 1:]:
+                    diff = pos[r2] - pos[r1]
+                    dist = float(np.linalg.norm(diff)) or 1e-6
+                    if dist < 30:
+                        f = -diff / dist * repulse_k / dist
+                        forces[r1] += f
+                        forces[r2] -= f
+
+            for ref in pos:
+                pos[ref] += forces[ref] * damping
+                pos[ref][0] = float(np.clip(pos[ref][0], 5, w - 5))
+                pos[ref][1] = float(np.clip(pos[ref][1], 5, h - 5))
+
+        positions = {
+            ref: {"x": float(p[0]), "y": float(p[1]), "rotation": 0.0}
+            for ref, p in pos.items()
+        }
+        return {"positions": positions, "algorithm": "force_directed", "iterations": 120}
+
+    # ── Simulated annealing ───────────────────────────────────────────────────
+    # NOTE: was referenced in optimize() but not implemented in v2.0 → crash.
+
+    def _simulated_annealing(self) -> Dict[str, Any]:
+        w, h = self.board.board_width, self.board.board_height
+
+        # Initialise from current positions or random
+        cur: Dict[str, Tuple[float, float]] = {}
+        for comp in self.board.components:
+            if comp.is_power_symbol:
+                continue
+            cur[comp.ref] = (
+                comp.x if comp.x else random.uniform(5, w - 5),
+                comp.y if comp.y else random.uniform(5, h - 5),
+            )
+
+        best       = dict(cur)
+        best_cost  = self._wire_length(best)
+        temp       = SA_INITIAL_TEMP
+
+        for _ in range(SA_ITERATIONS):
+            # Perturb one random component
+            ref = random.choice(list(cur.keys()))
+            ox, oy = cur[ref]
+            step   = temp * 0.3
+            nx     = max(5, min(w - 5, ox + random.uniform(-step, step)))
+            ny     = max(5, min(h - 5, oy + random.uniform(-step, step)))
+            cur[ref] = (nx, ny)
+
+            cost = self._wire_length(cur)
+            delta = cost - best_cost
+
+            if delta < 0 or random.random() < math.exp(-delta / max(temp, 1e-6)):
+                if cost < best_cost:
+                    best      = dict(cur)
+                    best_cost = cost
+            else:
+                cur[ref] = (ox, oy)   # revert
+
+            temp *= SA_COOLING_RATE
+
+        positions = {
+            ref: {"x": x, "y": y, "rotation": 0.0}
+            for ref, (x, y) in best.items()
+        }
+        return {"positions": positions, "algorithm": "simulated_annealing",
+                "iterations": SA_ITERATIONS, "final_cost": best_cost}
+
+    # ── Grid fallback ─────────────────────────────────────────────────────────
+
     def _grid_placement(self) -> Dict[str, Any]:
-        """Fallback grid placement with grouping."""
-        # Group by net connectivity
-        groups = self._compute_groups()
-        
-        positions = {}
-        grid_size = 10.0
-        col = 0
-        
+        groups = self._union_find_groups()
+        positions: Dict[str, Dict[str, float]] = {}
+        grid_step, margin, cols = 10.0, 10.0, 5
+
+        # NOTE: fixed col-advance bug – outer col cursor now advances correctly
+        # after each group is placed.
+        global_col = 0
         for group in groups:
             for i, ref in enumerate(group):
-                row = i // 5
-                col_offset = col + (i % 5)
+                row = i // cols
+                col = global_col + (i % cols)
                 positions[ref] = {
-                    "x": 10.0 + col_offset * grid_size,
-                    "y": 10.0 + row * grid_size,
-                    "rotation": 0
+                    "x": margin + col * grid_step,
+                    "y": margin + row * grid_step,
+                    "rotation": 0.0,
                 }
-            col += (len(group) // 5) + 1
-        
-        return {
-            "positions": positions,
-            "algorithm": "connectivity_grid",
-            "iterations": 1
-        }
-    
-    def _compute_groups(self) -> List[List[str]]:
-        """Group components by connectivity using union-find."""
-        parent = {c.ref: c.ref for c in self.board.components}
-        
-        def find(x):
+            global_col += max(len(group) % cols or cols, 1) + 1   # advance past this group
+
+        return {"positions": positions, "algorithm": "connectivity_grid", "iterations": 1}
+
+    def _union_find_groups(self) -> List[List[str]]:
+        parent = {c.ref: c.ref for c in self.board.components if not c.is_power_symbol}
+
+        def find(x: str) -> str:
             if parent[x] != x:
                 parent[x] = find(parent[x])
             return parent[x]
-        
-        def union(x, y):
-            parent[find(x)] = find(y)
-        
-        # Union connected components
+
+        def union(x: str, y: str) -> None:
+            if x in parent and y in parent:
+                parent[find(x)] = find(y)
+
         for conn in self.board.connections:
-            refs = [p.ref for p in conn.pins]
+            refs = [p.ref for p in conn.pins if not _POWER_SYMBOL_RE.match(p.ref)]
             for i in range(1, len(refs)):
                 union(refs[0], refs[i])
-        
-        # Build groups
-        groups = defaultdict(list)
+
+        groups: Dict[str, List[str]] = defaultdict(list)
         for ref in parent:
             groups[find(ref)].append(ref)
-        
         return sorted(groups.values(), key=len, reverse=True)
 
 
-# ── Lifespan ─────────────────────────────────────────────────────────────────
-# NOTE: lifespan MUST be defined before app = FastAPI(lifespan=lifespan)
-
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    """Application lifespan management."""
-    logger.info("Starting AI PCB Assistant v2.0...")
-
-    # Ensure output directory exists
-    CONFIG.OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-
-    # Load templates
-    if CONFIG.TEMPLATES_DIR.exists():
-        for path in CONFIG.TEMPLATES_DIR.glob("*.json"):
-            try:
-                if AIOFILES_AVAILABLE:
-                    async with aiofiles.open(path, 'r') as f:
-                        content = await f.read()
-                else:
-                    content = path.read_text()
-                _state.template_cache[path.stem] = json.loads(content)
-            except Exception as e:
-                logger.warning(f"Failed to load template {path.name}: {e}")
-
-    logger.info(f"Loaded {len(_state.template_cache)} templates")
-
-    # Load engines
-    try:
-        from engines.llm_engine import load_llm
-        _state.llm = load_llm()
-        logger.info("LLM engine loaded")
-    except Exception as e:
-        logger.warning(f"LLM not available: {e}")
-
-    try:
-        from engines.placement_engine import load_placement_model
-        _state.rl_model = load_placement_model()
-        logger.info("RL placement engine loaded")
-    except Exception as e:
-        logger.warning(f"RL placement not available: {e}")
-
-    yield
-
-    # Cleanup
-    logger.info("Shutting down...")
-
-
-# ── FastAPI Application ───────────────────────────────────────────────────────
-
-app = FastAPI(
-    title="AI PCB Assistant Backend",
-    description="Advanced AI backend for KiCad PCB design with full netlist integration",
-    version="2.0.0",
-    lifespan=lifespan,
-)
-
-app.add_middleware(GZipMiddleware, minimum_size=1000)
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=os.environ.get("CORS_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000").split(","),
-    allow_credentials=True,
-    allow_methods=["GET", "POST"],
-    allow_headers=["*"],
-)
-
-# Request timing middleware
-@app.middleware("http")
-async def add_timing_header(request: Request, call_next):
-    start = time.time()
-    response = await call_next(request)
-    response.headers["X-Process-Time"] = str(time.time() - start)
-    return response
-
-# ── Endpoints ─────────────────────────────────────────────────────────────────
-
-@app.get("/health", response_model=HealthResponse)
-async def health_check():
-    """Comprehensive health check."""
-    return HealthResponse(
-        status="healthy" if _state.llm or _state.rl_model else "degraded",
-        version="2.0.0",
-        uptime_seconds=_state.uptime_seconds,
-        models_loaded=_state.llm is not None or _state.rl_model is not None,
-        llm_loaded=_state.llm is not None,
-        placement_engine_loaded=_state.rl_model is not None,
-        templates_available=len(_state.template_cache),
-        capabilities=_state.get_capabilities()
-    )
-
-@app.post("/analyze/dfm", response_model=List[DFMViolation])
-async def analyze_dfm(board: BoardData):
-    """
-    Advanced DFM analysis with full netlist integration.
-    
-    Features:
-    - Spatial indexing for O(n log n) performance
-    - Power integrity analysis (decoupling, bulk capacitance)
-    - Signal integrity checks (differential pairs, high-speed)
-    - Thermal analysis
-    - Connectivity-aware spacing (connected components can be closer)
-    """
-    engine = AdvancedDFMEngine(board)
-    violations = engine.analyze()
-    return violations
-
-@app.post("/placement/optimize")
-async def optimize_placement(board: BoardData, algorithm: str = "auto"):
-    """
-    Advanced placement optimization.
-    
-    Algorithms:
-    - auto: Choose best available (RL > force_directed > grid)
-    - rl: Reinforcement learning (if available)
-    - force_directed: Physics-based spring simulation
-    - annealing: Simulated annealing
-    - grid: Connectivity-aware grid
-    """
-    t0 = time.time()
-    
-    # Choose algorithm
-    if algorithm == "auto":
-        if _state.rl_model:
-            algorithm = "rl"
-        else:
-            algorithm = "force_directed"
-    
-    if algorithm == "rl" and _state.rl_model:
-        try:
-            from engines.placement_engine import optimize_with_rl
-            result = optimize_with_rl(_state.rl_model, board.model_dump())
-            result["algorithm"] = "rl"
-            result["time_ms"] = (time.time() - t0) * 1000
-            return result
-        except Exception as e:
-            logger.warning(f"RL failed, falling back: {e}")
-            algorithm = "force_directed"
-    
-    # Use internal optimizer
-    optimizer = PlacementOptimizer(board)
-    result = optimizer.optimize(algorithm)
-    result["time_ms"] = (time.time() - t0) * 1000
-    
-    return result
+# ── Connection normaliser (template compat) ───────────────────────────────────
 
 def _normalise_connections(circuit_data: Dict[str, Any]) -> Dict[str, Any]:
-    """Convert old-style template connection pins to BoardConnection PinRef format.
+    """
+    Convert old-style "pins": ["R1.1", "C1.1"] to BoardConnection format
+    "pins": [{"ref": "R1", "pin": "1"}, ...].
 
-    Old format (CircuitData / templates):  "pins": ["R1.1", "C1.1"]
-    New format (BoardConnection):          "pins": [{"ref": "R1", "pin": "1"}, ...]
-
-    Also removes component refs not present in the components list (e.g. KiCad
-    power symbols like PWR_FLAG that live only in the schematic) to avoid the
-    BoardData.validate_references error.
-    # NOTE: safe to call on data already in new format - dicts pass through unchanged.
+    Also drops pins whose component ref isn't in the components list
+    (e.g. KiCad power symbols) to prevent BoardData validation warnings.
     """
     import copy
     data = copy.deepcopy(circuit_data)
-
     comp_refs: Set[str] = {c["ref"] for c in data.get("components", []) if "ref" in c}
 
     normalised: List[Dict[str, Any]] = []
     for conn in data.get("connections", []):
-        raw_pins = conn.get("pins", [])
         new_pins: List[Dict[str, str]] = []
-        for p in raw_pins:
+        for p in conn.get("pins", []):
             if isinstance(p, str):
-                # "R1.1" → {"ref": "R1", "pin": "1"}
                 if "." in p:
                     ref, pin = p.split(".", 1)
                     new_pins.append({"ref": ref, "pin": pin})
             elif isinstance(p, dict):
                 new_pins.append(p)
-        # Drop pins whose component doesn't exist in the board (power symbols etc.)
-        new_pins = [p for p in new_pins if p.get("ref", "") in comp_refs]
+        # Keep only pins whose component exists and isn't a power symbol
+        new_pins = [
+            p for p in new_pins
+            if p.get("ref", "") in comp_refs
+            or _POWER_SYMBOL_RE.match(p.get("ref", ""))
+        ]
         if len(new_pins) >= 2:
             normalised.append({**conn, "pins": new_pins})
 
@@ -1077,150 +1007,508 @@ def _normalise_connections(circuit_data: Dict[str, Any]) -> Dict[str, Any]:
     return data
 
 
-@app.post("/generate")
-async def generate_circuit(request: GenerateRequest, background_tasks: BackgroundTasks):
+def _enrich_net_properties(circuit_data: Dict[str, Any]) -> None:
     """
-    Generate circuit from natural language with advanced analysis.
+    Auto-detect power/ground nets and set appropriate net_type and voltage.
+    Modifies circuit_data in place.
     """
-    t0 = time.time()
+    # Power net patterns
+    POWER_PATTERNS = {
+        "VCC": {"net_type": "power", "voltage": 5.0},
+        "VDD": {"net_type": "power", "voltage": 3.3},
+        "3V3": {"net_type": "power", "voltage": 3.3},
+        "3.3V": {"net_type": "power", "voltage": 3.3},
+        "5V": {"net_type": "power", "voltage": 5.0},
+        "1V8": {"net_type": "power", "voltage": 1.8},
+        "1.8V": {"net_type": "power", "voltage": 1.8},
+        "12V": {"net_type": "power", "voltage": 12.0},
+        "24V": {"net_type": "power", "voltage": 24.0},
+        "VPWR": {"net_type": "power", "voltage": 5.0},
+        "VSUP": {"net_type": "power", "voltage": 5.0},
+        "AVCC": {"net_type": "power", "voltage": 3.3},
+        "DVCC": {"net_type": "power", "voltage": 3.3},
+        "VCCIO": {"net_type": "power", "voltage": 3.3},
+        "VCCINT": {"net_type": "power", "voltage": 1.8},
+    }
+    GROUND_PATTERNS = ["GND", "VSS", "AGND", "DGND", "PGND", "SGND", "VEE", "VSSA", "VSSD"]
+
+    for conn in circuit_data.get("connections", []):
+        net_name = conn.get("net", "")
+        props = conn.get("properties", {})
+        
+        # Only enrich if properties don't already exist or are default signal
+        if not props or props.get("net_type") == "signal":
+            # Check if it's a power net
+            for pattern, power_props in POWER_PATTERNS.items():
+                if pattern in net_name.upper():
+                    conn["properties"] = {
+                        "net_type": "power",
+                        "voltage": power_props["voltage"],
+                        "current_max": None,
+                        "frequency": None,
+                        "impedance_ohms": None,
+                        "length_mm": None,
+                        "is_critical": False,
+                    }
+                    break
+            # Check if it's a ground net
+            else:
+                for pattern in GROUND_PATTERNS:
+                    if pattern in net_name.upper():
+                        conn["properties"] = {
+                            "net_type": "ground",
+                            "voltage": None,
+                            "current_max": None,
+                            "frequency": None,
+                            "impedance_ohms": None,
+                            "length_mm": None,
+                            "is_critical": False,
+                        }
+                        break
+
+
+def _enrich_component_properties(circuit_data: Dict[str, Any]) -> None:
+    """
+    Auto-detect component polarization based on part type and value.
+    Modifies circuit_data in place.
+    """
+    for comp in circuit_data.get("components", []):
+        part = comp.get("part", "").upper()
+        lib = comp.get("lib", "").upper()
+        value = comp.get("value", "").lower()
+        ref = comp.get("ref", "")
+        
+        # LED detection
+        if part == "LED" or lib == "LED" or ref.startswith("D") or ref.startswith("LED"):
+            if "LED" in part or "LED" in lib or "led" in value.lower():
+                comp["is_polarized"] = True
+        
+        # Electrolytic capacitor detection (typically polarized)
+        # Large value caps (> 1µF) are often electrolytic
+        if part == "C" or part == "CP" or ref.startswith("C"):
+            # Parse capacitor value
+            if "uf" in value or "µf" in value:
+                # Extract numeric value
+                val_str = value.replace("uf", "").replace("µf", "").strip()
+                try:
+                    val = float(val_str)
+                    # 10µF and above are typically electrolytic (polarized)
+                    if val >= 10.0:
+                        comp["is_polarized"] = True
+                except ValueError:
+                    pass
+            # Explicit polarized capacitor
+            if part == "CP" or "polarized" in comp.get("description", "").lower():
+                comp["is_polarized"] = True
+        
+        # Diode detection (all diodes are polarized)
+        if part in ["D", "DIODE"] or (ref.startswith("D") and not ref.startswith("D") and len(ref) > 1 and ref[1].isdigit()):
+            if part in ["D", "DIODE"] or "diode" in comp.get("description", "").lower():
+                comp["is_polarized"] = True
+
+
+# ── Lifespan ──────────────────────────────────────────────────────────────────
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    logger.info("Starting AI PCB Assistant v2.1…")
+
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    TEMP_DIR.mkdir(parents=True, exist_ok=True)
+
+    # Load templates (always sync – aiofiles adds no benefit for startup reads)
+    if TEMPLATES_DIR.exists():
+        for path in sorted(TEMPLATES_DIR.glob("*.json")):
+            try:
+                _state.template_cache[path.stem] = json.loads(
+                    path.read_text(encoding="utf-8")
+                )
+            except Exception as exc:
+                logger.warning("Failed to load template %s: %s", path.name, exc)
+    logger.info("Loaded %d templates", len(_state.template_cache))
+
+    # LLM
+    try:
+        from engines.llm_engine import load_llm   # type: ignore
+        _state.llm = load_llm()
+        logger.info("LLM engine loaded.")
+    except ImportError:
+        logger.warning("engines.llm_engine not found – LLM disabled.")
+    except Exception as exc:
+        logger.warning("LLM failed to load: %s", exc)
+
+    # RL placement
+    try:
+        from engines.placement_engine import load_placement_model   # type: ignore
+        _state.rl_model = load_placement_model()
+        logger.info("RL placement engine loaded.")
+    except ImportError:
+        logger.warning("engines.placement_engine not found – RL disabled.")
+    except Exception as exc:
+        logger.warning("RL placement failed to load: %s", exc)
+
+    logger.info("Startup complete. capabilities=%s", _state.get_capabilities())
+    yield
+    logger.info("Shutting down AI PCB Assistant.")
+
+
+# ── FastAPI app ───────────────────────────────────────────────────────────────
+
+app = FastAPI(
+    title="AI PCB Assistant Backend",
+    description="Advanced AI backend for KiCad PCB design with netlist integration",
+    version="2.1.0",
+    lifespan=lifespan,
+)
+
+app.add_middleware(GZipMiddleware, minimum_size=1000)
+app.add_middleware(
+    CORSMiddleware,
+    # NOTE: KiCad plugin makes requests from the Python process (no browser
+    # origin header), and the local web demo runs from file:// or localhost.
+    # The original default of "localhost:3000 only" blocked both. Use env var
+    # CORS_ORIGINS to lock down in production.
+    allow_origins=os.environ.get("CORS_ORIGINS", "*").split(","),
+    allow_credentials=True,
+    allow_methods=["GET", "POST"],
+    allow_headers=["*"],
+)
+
+# Serve web demo if present
+_demo_dir = _BASE_DIR / "demo"
+if _demo_dir.exists():
+    app.mount("/demo", StaticFiles(directory=str(_demo_dir), html=True), name="demo")
+
+
+# ── Request timing middleware ─────────────────────────────────────────────────
+
+@app.middleware("http")
+async def add_timing_header(request: Request, call_next: Any):
+    t0 = time.perf_counter()
+    response = await call_next(request)
+    response.headers["X-Process-Time-Ms"] = f"{(time.perf_counter() - t0) * 1000:.1f}"
+    return response
+
+
+# ── Global error handler ──────────────────────────────────────────────────────
+
+@app.exception_handler(Exception)
+async def global_error_handler(request: Request, exc: Exception) -> JSONResponse:
+    logger.exception("Unhandled exception %s %s", request.method, request.url)
+    return JSONResponse(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        content={"detail": "An internal server error occurred."},
+    )
+
+
+# ── Endpoints ─────────────────────────────────────────────────────────────────
+
+@app.get("/health", response_model=HealthResponse, tags=["meta"])
+async def health_check() -> HealthResponse:
+    return HealthResponse(
+        status="healthy" if _state.models_loaded else "degraded",
+        version=app.version,
+        uptime_seconds=round(_state.uptime_seconds, 1),
+        models_loaded=_state.models_loaded,
+        llm_loaded=_state.llm is not None,
+        placement_engine_loaded=_state.rl_model is not None,
+        templates_available=len(_state.template_cache),
+        capabilities=_state.get_capabilities(),
+    )
+
+
+@app.post("/generate", response_model=GenerateResponse, tags=["generation"])
+async def generate_circuit(
+    request: GenerateRequest, background_tasks: BackgroundTasks
+) -> GenerateResponse:
+    """
+    Natural-language → validated CircuitData JSON → optional .kicad_sch file.
+
+    Flow:
+      1. Score all templates against prompt keywords
+      2. Fall back to LLM if no template matched and LLM is loaded
+      3. Normalise connections to BoardConnection format
+      4. Auto-place if all components sit at (0, 0)
+      5. Run DFM and embed violations in warnings
+      6. Persist JSON + optionally a .kicad_sch to output/
+      7. Return GenerateResponse with download_url
+    """
+    t0 = time.perf_counter()
     request_id = str(uuid.uuid4())[:8]
-    
-    # Template matching with scoring
-    template_name = None
-    best_score = 0
-    
-    for keywords, name, priority in TEMPLATE_KEYWORDS:
-        score = sum(1 for kw in keywords if kw in request.prompt.lower()) * priority
+    warnings: List[str] = []
+
+    # ── Step 1: template scoring ──────────────────────────────────────────────
+    prompt_lower = request.prompt.lower()
+    best_name, best_score = None, 0
+    for keywords, name, weight in TEMPLATE_KEYWORDS:
+        score = sum(weight for kw in keywords if kw in prompt_lower)
         if score > best_score:
-            best_score = score
-            template_name = name
-    
-    # Load template or use LLM
-    circuit_data = None
-    warnings = []
-    
-    if template_name and template_name in _state.template_cache:
-        circuit_data = _state.template_cache[template_name]
+            best_score, best_name = score, name
+
+    circuit_data: Optional[Dict[str, Any]] = None
+    template_used: Optional[str] = None
+
+    if best_name and best_name in _state.template_cache:
+        circuit_data = _state.template_cache[best_name]
+        template_used = best_name
     elif _state.llm:
         try:
-            circuit_data = _state.llm.generate_circuit_json(request.prompt)
-        except Exception as e:
-            warnings.append(f"LLM generation failed: {e}")
-    
+            # generate_circuit_json is async — must be awaited.  Without the
+            # await it returns a coroutine object (truthy) so circuit_data would
+            # be set to a coroutine instead of a dict, silently bypassing the
+            # template fallback and裂failing JSON serialisation later.
+            circuit_data = await _state.llm.generate_circuit_json(request.prompt) or None
+        except Exception as exc:
+            warnings.append(f"LLM generation failed: {exc}")
+
     if not circuit_data:
         return GenerateResponse(
             success=False,
-            error="No matching template and LLM unavailable",
-            request_id=request_id
-        )
-    
-    # Validate and enhance
-    try:
-        # NOTE: Templates store connections as "pins": ["R1.1", "C1.1"] (old CircuitData
-        # format) or as [{"ref":"R1","pin":"1"}] (BoardConnection format). Normalise here
-        # so BoardData validation doesn't fail on legacy template data.
-        circuit_data = _normalise_connections(circuit_data)
-        board = BoardData(**circuit_data)
-        
-        # Auto-place if no positions
-        if all(c.x == 0 and c.y == 0 for c in board.components):
-            optimizer = PlacementOptimizer(board)
-            placement = optimizer.optimize("grid")
-            for ref, pos in placement["positions"].items():
-                comp = board.get_component(ref)
-                if comp:
-                    comp.x = pos["x"]
-                    comp.y = pos["y"]
-        
-        # Run DFM
-        dfm_engine = AdvancedDFMEngine(board)
-        violations = dfm_engine.analyze()
-        
-        # Async save
-        output_path = CONFIG.OUTPUT_DIR / f"circuit_{request_id}.json"
-        if AIOFILES_AVAILABLE:
-            background_tasks.add_task(_async_save_circuit, output_path, board.model_dump())
-        else:
-            output_path.write_text(json.dumps(board.model_dump(), indent=2))
-        
-        generation_time = (time.time() - t0) * 1000
-        
-        return GenerateResponse(
-            success=True,
-            circuit_data=board.model_dump(),
-            template_used=template_name,
-            generation_time_ms=generation_time,
+            error=(
+                "No matching template found and LLM is unavailable. "
+                "Try: '555 timer', '3.3V regulator', 'LED resistor', "
+                "'op-amp buffer', 'MOSFET switch'."
+            ),
             warnings=warnings,
-            request_id=request_id
+            request_id=request_id,
         )
-        
-    except Exception as e:
+
+    # ── Step 2: normalise and validate ───────────────────────────────────────
+    try:
+        normalised = _normalise_connections(circuit_data)
+        # Enrich net properties (VCC → power, GND → ground)
+        _enrich_net_properties(normalised)
+        # Enrich component properties (LED → polarized, large caps → polarized)
+        _enrich_component_properties(normalised)
+        board = BoardData(**normalised)
+    except Exception as exc:
         return GenerateResponse(
             success=False,
-            error=f"Validation failed: {e}",
-            request_id=request_id
+            error=f"Schema validation failed: {exc}",
+            warnings=warnings,
+            request_id=request_id,
         )
 
-async def _async_save_circuit(path: Path, data: dict):
-    """Async save circuit to disk."""
-    async with aiofiles.open(path, 'w') as f:
-        await f.write(json.dumps(data, indent=2))
+    # ── Step 3: auto-place if all at origin ──────────────────────────────────
+    if all(c.x == 0.0 and c.y == 0.0 for c in board.components if not c.is_power_symbol):
+        algo = "force_directed" if _NP else "annealing" if request.priority == "quality" else "grid"
+        optimizer = PlacementOptimizer(board)
+        placement = optimizer.optimize(algo)
+        for ref, pos in placement["positions"].items():
+            comp = board.get_component(ref)
+            if comp:
+                comp.x = pos["x"]   # works because model_config frozen=False
+                comp.y = pos["y"]
 
-@app.get("/templates")
-async def list_templates():
-    """List available templates with metadata."""
-    return [
-        {
-            "name": name,
-            "description": data.get("description", ""),
-            "components": len(data.get("components", [])),
-            "nets": len(data.get("connections", []))
-        }
-        for name, data in _state.template_cache.items()
-    ]
+    # ── Step 4: DFM ──────────────────────────────────────────────────────────
+    dfm_violations = AdvancedDFMEngine(board).analyze()
+    for v in dfm_violations:
+        if v.severity in ("error", "critical"):
+            warnings.append(f"[DFM {v.rule_id}] {v.message}")
 
-@app.post("/dfm/check", response_model=List[DFMViolation])
-async def dfm_check(board: BoardData):
+    # ── Step 5: persist JSON ──────────────────────────────────────────────────
+    json_path = OUTPUT_DIR / f"circuit_{request_id}.json"
+    board_dict = board.model_dump()
+
+    async def _save_json() -> None:
+        if _AIOFILES:
+            async with aiofiles.open(json_path, "w") as f:
+                await f.write(json.dumps(board_dict, indent=2))
+        else:
+            json_path.write_text(json.dumps(board_dict, indent=2))
+
+    background_tasks.add_task(_save_json)
+
+    # ── Step 6: export .kicad_sch ────────────────────────────────────────────
+    sch_filename: Optional[str] = None
+    download_url: Optional[str] = None
+    try:
+        from circuit_schema import CircuitData            # type: ignore
+        from engines.kicad_exporter import export_to_kicad_sch  # type: ignore
+
+        raw = _state.template_cache.get(template_used, {}) if template_used else {}
+        src = raw or circuit_data
+        schema_obj = CircuitData(**src)
+        sch_content = export_to_kicad_sch(schema_obj)
+
+        desc = src.get("description", template_used or request_id)
+        # Strip non-ASCII first (em-dashes, curly quotes …) so Windows
+        # cp1252 path encoding never produces garbage characters like â.
+        desc_ascii = desc.encode("ascii", errors="ignore").decode("ascii")
+        safe = re.sub(r"[^\w\s\-]", "", desc_ascii).strip()
+        safe = re.sub(r"\s+", "_", safe)          # spaces → underscores
+        safe = re.sub(r"_+", "_", safe).strip("_")  # collapse runs e.g. a__b → a_b
+        safe = (safe[:80] or request_id)
+        sch_path = OUTPUT_DIR / f"{safe}.kicad_sch"
+        sch_path.write_text(sch_content, encoding="utf-8")
+        sch_filename = sch_path.name
+        download_url = f"/download/{sch_filename}"
+        logger.info("KiCad schematic saved: %s", sch_path)
+    except ImportError as exc:
+        warnings.append(f"KiCad export skipped (module missing): {exc}")
+    except Exception as exc:
+        warnings.append(f"KiCad export failed: {exc}")
+        logger.warning("KiCad export failed: %s", exc)
+
+    return GenerateResponse(
+        success=True,
+        circuit_data=board_dict,
+        template_used=template_used,
+        generation_time_ms=round((time.perf_counter() - t0) * 1000, 1),
+        warnings=warnings,
+        request_id=request_id,
+        output_file=sch_filename,
+        download_url=download_url,
+    )
+
+
+@app.post("/generate/schematic", response_model=SchematicResponse, tags=["generation"])
+async def generate_schematic(request: SchematicRequest) -> SchematicResponse:
+    """Plugin-compatible schematic generation – delegates to /generate."""
+    result = await generate_circuit(
+        GenerateRequest(prompt=request.prompt), BackgroundTasks()
+    )
+    return SchematicResponse(
+        success=result.success,
+        component_count=len(result.circuit_data.get("components", [])) if result.circuit_data else 0,
+        output_file=result.output_file,
+        download_url=result.download_url,
+        error=result.error,
+    )
+
+
+@app.post("/analyze/dfm", response_model=List[DFMViolation], tags=["dfm"])
+async def analyze_dfm(board: BoardData) -> List[DFMViolation]:
+    """Full netlist-aware DFM analysis."""
+    return AdvancedDFMEngine(board).analyze()
+
+
+@app.post("/dfm/check", response_model=List[DFMViolation], tags=["dfm"])
+async def dfm_check_compat(board: BoardData) -> List[DFMViolation]:
     """
-    Alias for /analyze/dfm kept for plugin.py compatibility.
-    # NOTE: plugin.py sends DFM requests to /dfm/check — this route ensures
-    # existing plugin builds continue to work with the v2 backend.
+    Alias for /analyze/dfm for plugin.py compatibility.
+    # NOTE: plugin.py sends DFM requests to /dfm/check – this keeps old
+    # plugin builds working with the v2 backend without any plugin changes.
     """
     return await analyze_dfm(board)
 
 
-@app.post("/export/kicad")
-async def export_kicad(circuit: dict):
-    """Export to KiCad format."""
-    try:
-        from circuit_schema import CircuitData
-        from engines.kicad_exporter import export_to_kicad_sch
-        
-        data = CircuitData(**circuit)
-        content = export_to_kicad_sch(data)
-        
-        # Stream response for large files
-        def iter_content():
-            yield content
-        
-        return StreamingResponse(
-            iter_content(),
-            media_type="application/x-kicad-schematic",
-            headers={"Content-Disposition": f"attachment; filename=circuit.kicad_sch"}
-        )
-        
-    except ImportError:
-        raise HTTPException(status_code=501, detail="KiCad exporter not available")
+@app.post("/placement/optimize", tags=["placement"])
+async def optimize_placement(board: BoardData, algorithm: str = "auto") -> Dict[str, Any]:
+    """
+    Netlist-aware placement optimisation.
 
-# ── Entry Point ───────────────────────────────────────────────────────────────
+    algorithm options: auto | rl | force_directed | annealing | grid
+    - auto: RL if loaded, else force_directed (numpy) or annealing
+    """
+    t0 = time.perf_counter()
+
+    if algorithm == "auto":
+        if _state.rl_model:
+            algorithm = "rl"
+        elif _NP:
+            algorithm = "force_directed"
+        else:
+            algorithm = "annealing"
+
+    if algorithm == "rl" and _state.rl_model:
+        try:
+            from engines.placement_engine import optimize_with_rl   # type: ignore
+            result: Dict[str, Any] = optimize_with_rl(_state.rl_model, board.model_dump())
+            result.update({"algorithm": "rl", "time_ms": (time.perf_counter() - t0) * 1000})
+            return result
+        except Exception as exc:
+            logger.warning("RL placement failed, falling back: %s", exc)
+            algorithm = "force_directed" if _NP else "annealing"
+
+    optimizer = PlacementOptimizer(board)
+    result = optimizer.optimize(algorithm)
+    result["time_ms"] = round((time.perf_counter() - t0) * 1000, 1)
+    return result
+
+
+@app.post("/export/kicad", tags=["export"])
+async def export_kicad(circuit: dict) -> StreamingResponse:
+    """Export CircuitData dict to a streaming .kicad_sch download."""
+    try:
+        from circuit_schema import CircuitData            # type: ignore
+        from engines.kicad_exporter import export_to_kicad_sch  # type: ignore
+
+        data    = CircuitData(**circuit)
+        content = export_to_kicad_sch(data)
+
+        return StreamingResponse(
+            iter([content]),
+            media_type="application/x-kicad-schematic",
+            headers={"Content-Disposition": "attachment; filename=circuit.kicad_sch"},
+        )
+    except ImportError as exc:
+        raise HTTPException(status_code=501, detail=f"KiCad exporter not available: {exc}")
+    except Exception as exc:
+        logger.error("KiCad export failed: %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.get("/download/{filename}", tags=["export"])
+async def download_file(filename: str) -> FileResponse:
+    """Download a previously generated .kicad_sch or .json file."""
+    safe = re.sub(r"[^a-zA-Z0-9_.\-]", "", filename)
+    if not (safe.endswith(".kicad_sch") or safe.endswith(".json")):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Only .kicad_sch or .json files are downloadable.",
+        )
+    if "/" in safe or "\\" in safe:
+        raise HTTPException(status_code=400, detail="Invalid filename.")
+
+    file_path = OUTPUT_DIR / safe
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail=f"File not found: {safe}")
+
+    return FileResponse(
+        path=str(file_path),
+        filename=safe,
+        media_type="application/octet-stream",
+    )
+
+
+@app.get("/circuit/{name}", tags=["templates"])
+async def get_circuit_template(name: str) -> Dict[str, Any]:
+    """Return raw CircuitData JSON for a named template."""
+    safe = re.sub(r"[^a-zA-Z0-9_\-]", "", name)
+    if not safe:
+        raise HTTPException(status_code=400, detail="Invalid template name.")
+    data = _state.template_cache.get(safe)
+    if data is None:
+        raise HTTPException(status_code=404, detail=f"Template '{safe}' not found.")
+    return data
+
+
+@app.get("/templates", tags=["templates"])
+async def list_templates() -> List[Dict[str, Any]]:
+    """List all loaded templates with metadata."""
+    return [
+        {
+            "name":        name,
+            "description": data.get("description", ""),
+            "components":  len(data.get("components", [])),
+            "nets":        len(data.get("connections", [])),
+            "category":    data.get("metadata", {}).get("category", ""),
+        }
+        for name, data in sorted(_state.template_cache.items())
+    ]
+
+
+# ── Entry point ───────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
     import uvicorn
-    
+
     uvicorn.run(
         "ai_server:app",
         host=os.environ.get("HOST", "127.0.0.1"),
         port=int(os.environ.get("PORT", "8765")),
         reload=os.environ.get("RELOAD", "false").lower() == "true",
-        workers=int(os.environ.get("WORKERS", "1"))
+        workers=int(os.environ.get("WORKERS", "1")),
+        log_level=os.environ.get("LOG_LEVEL", "info"),
     )
