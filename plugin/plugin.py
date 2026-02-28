@@ -11,6 +11,7 @@ import math
 import os
 import queue
 import re
+import subprocess
 import tempfile
 import threading
 import time
@@ -23,9 +24,18 @@ from urllib.parse import urljoin
 
 import pcbnew
 import wx
-import wx.grid
-import wx.lib.scrolledpanel as scrolled
-from wx.lib.floatcanvas import FloatCanvas, NavCanvas, Resources
+try:
+    import wx.lib.scrolledpanel as scrolled
+    _ScrolledPanelClass = scrolled.ScrolledPanel
+except Exception:
+    _ScrolledPanelClass = wx.ScrolledWindow
+
+try:
+    from wx.lib.floatcanvas import NavCanvas as _NavCanvas
+    HAS_FLOATCANVAS = True
+except Exception:
+    _NavCanvas = None
+    HAS_FLOATCANVAS = False
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -157,7 +167,24 @@ class AsyncHTTPClient:
                 with urllib.request.urlopen(req, timeout=CONFIG.request_timeout) as resp:
                     result = json.loads(resp.read().decode())
                     self._results[request_id] = ("success", result)
-                    
+
+            except urllib.error.HTTPError as e:
+                body = ""
+                try:
+                    body = e.read().decode("utf-8", errors="replace")
+                except Exception:
+                    body = ""
+
+                if body:
+                    try:
+                        parsed = json.loads(body)
+                        detail = parsed.get("detail", parsed)
+                        self._results[request_id] = ("error", f"HTTP {e.code}: {detail}")
+                    except Exception:
+                        self._results[request_id] = ("error", f"HTTP {e.code}: {body}")
+                else:
+                    self._results[request_id] = ("error", f"HTTP {e.code}: {e.reason}")
+
             except Exception as e:
                 self._results[request_id] = ("error", str(e))
             
@@ -185,11 +212,28 @@ HTTP_CLIENT = AsyncHTTPClient()
 
 # ── Visualization Canvas ──────────────────────────────────────────────────────
 
-class PlacementPreviewCanvas(NavCanvas.NavCanvas):
-    """Interactive canvas for placement preview."""
-    
+if HAS_FLOATCANVAS:
+    _CanvasBase = _NavCanvas.NavCanvas
+else:
+    _CanvasBase = wx.ScrolledWindow
+
+
+class PlacementPreviewCanvas(_CanvasBase):
+    """Interactive canvas for placement preview.
+    Falls back to a wx.ScrolledWindow with manual DC drawing when
+    wx.lib.floatcanvas is not available in the KiCad Python environment.
+    """
+
     def __init__(self, parent):
-        super().__init__(parent, size=(400, 400))
+        if HAS_FLOATCANVAS:
+            super().__init__(parent, size=(400, 400))
+        else:
+            super().__init__(parent, size=(400, 400),
+                             style=wx.HSCROLL | wx.VSCROLL)
+            self.SetScrollRate(5, 5)
+            self.SetBackgroundColour(wx.Colour(40, 40, 40))
+            self.Bind(wx.EVT_PAINT, self._on_paint)
+
         self.board_width = 100.0
         self.board_height = 80.0
         self.scale = 4.0  # pixels per mm
@@ -197,100 +241,156 @@ class PlacementPreviewCanvas(NavCanvas.NavCanvas):
         self.nets: List[NetInfo] = []
         self.selected_refs: Set[str] = set()
         self.show_ratsnest = True
-        
         self.Bind(wx.EVT_SIZE, self.on_size)
-    
+
+    # ── FloatCanvas path ──────────────────────────────────────────────────────
+
     def set_board_dimensions(self, width: float, height: float):
-        """Update board outline."""
         self.board_width = width
         self.board_height = height
-        self._draw_board()
-    
-    def update_components(self, components: List[ComponentInfo], 
-                         nets: Optional[List[NetInfo]] = None):
-        """Update component display."""
+        if HAS_FLOATCANVAS:
+            self._draw_board()
+        else:
+            self.Refresh()
+
+    def update_components(self, components: List[ComponentInfo],
+                          nets: Optional[List[NetInfo]] = None):
         self.components = {c.ref: c for c in components}
         if nets:
             self.nets = nets
         self._draw()
-    
+
     def highlight_component(self, ref: str, color: str = "red"):
-        """Highlight a specific component."""
         if ref in self.components:
             self.selected_refs.add(ref)
             self._draw()
-    
+
+    def _draw(self):
+        if HAS_FLOATCANVAS:
+            self._draw_floatcanvas()
+        else:
+            self.Refresh()
+
+    # ── FloatCanvas rendering ─────────────────────────────────────────────────
+
     def _draw_board(self):
-        """Draw board outline."""
+        if not HAS_FLOATCANVAS:
+            return
         self.Canvas.ClearAll()
-        
-        # Board outline
         w = self.board_width * self.scale
         h = self.board_height * self.scale
-        rect = self.Canvas.AddRectangle(
-            (-w/2, -h/2), (w, h),
-            LineColor="black", LineWidth=2, FillColor="darkgreen", FillStyle="CrossHatch"
+        self.Canvas.AddRectangle(
+            (-w / 2, -h / 2), (w, h),
+            LineColor="black", LineWidth=2,
+            FillColor="darkgreen", FillStyle="CrossHatch",
         )
-        
         self.Canvas.ZoomToBB()
-    
-    def _draw(self):
-        """Draw all components and connections."""
+
+    def _draw_floatcanvas(self):
+        if not HAS_FLOATCANVAS:
+            return
         self._draw_board()
-        
-        # Draw nets (ratsnest)
         if self.show_ratsnest and self.nets:
-            self._draw_ratsnest()
-        
-        # Draw components
+            self._draw_ratsnest_fc()
         for ref, comp in self.components.items():
-            x = (comp.x - self.board_width/2) * self.scale
-            y = -(comp.y - self.board_height/2) * self.scale  # Flip Y for canvas
-            
-            # Color by type
+            x = (comp.x - self.board_width / 2) * self.scale
+            y = -(comp.y - self.board_height / 2) * self.scale
             color = self._get_component_color(comp)
             if ref in self.selected_refs:
                 color = "red"
-            
-            # Draw component body
-            w = max(2.0, comp.width * self.scale * 0.8)
-            h = max(2.0, comp.height * self.scale * 0.8)
-            
-            rect = self.Canvas.AddRectangle(
-                (x - w/2, y - h/2), (w, h),
-                LineColor="black", LineWidth=1, FillColor=color
+            w2 = max(2.0, comp.width * self.scale * 0.8)
+            h2 = max(2.0, comp.height * self.scale * 0.8)
+            self.Canvas.AddRectangle(
+                (x - w2 / 2, y - h2 / 2), (w2, h2),
+                LineColor="black", LineWidth=1, FillColor=color,
             )
-            
-            # Draw reference
             self.Canvas.AddText(ref, (x, y), Size=8, Color="white", Position="cc")
-        
         self.Canvas.Draw()
-    
-    def _draw_ratsnest(self):
-        """Draw airwires between connected components."""
+
+    def _draw_ratsnest_fc(self):
         for net in self.nets:
             if len(net.pins) < 2:
                 continue
-            
-            # Get component positions
             positions = []
             for pin in net.pins:
                 if pin["ref"] in self.components:
-                    comp = self.components[pin["ref"]]
-                    x = (comp.x - self.board_width/2) * self.scale
-                    y = -(comp.y - self.board_height/2) * self.scale
-                    positions.append((x, y))
-            
-            # Draw lines between all pairs (simplified)
+                    c = self.components[pin["ref"]]
+                    positions.append((
+                        (c.x - self.board_width / 2) * self.scale,
+                        -(c.y - self.board_height / 2) * self.scale,
+                    ))
             color = self._get_net_color(net)
             for i in range(len(positions) - 1):
                 self.Canvas.AddLine(
-                    positions[i], positions[i+1],
-                    LineColor=color, LineWidth=1, LineStyle="Dot"
+                    positions[i], positions[i + 1],
+                    LineColor=color, LineWidth=1, LineStyle="Dot",
                 )
-    
+
+    # ── wx.ScrolledWindow (fallback) rendering ────────────────────────────────
+
+    def _on_paint(self, event):
+        """Fallback DC-based drawing when FloatCanvas is absent."""
+        dc = wx.PaintDC(self)
+        self.DoPrepareDC(dc)
+        w, h = self.GetClientSize()
+        dc.SetBackground(wx.Brush(wx.Colour(30, 30, 30)))
+        dc.Clear()
+
+        if w <= 0 or h <= 0:
+            return
+
+        # Board outline
+        margin = 20
+        board_px_w = w - 2 * margin
+        board_px_h = h - 2 * margin
+        dc.SetPen(wx.Pen(wx.Colour(0, 180, 0), 2))
+        dc.SetBrush(wx.Brush(wx.Colour(20, 60, 20)))
+        dc.DrawRectangle(margin, margin, board_px_w, board_px_h)
+
+        if not self.components:
+            dc.SetTextForeground(wx.Colour(120, 120, 120))
+            dc.DrawText("No components loaded", margin + 10, margin + 10)
+            return
+
+        bw = self.board_width or 100.0
+        bh = self.board_height or 80.0
+
+        def to_px(x_mm, y_mm):
+            px = int(margin + (x_mm / bw) * board_px_w)
+            py = int(margin + (y_mm / bh) * board_px_h)
+            return px, py
+
+        # Ratsnest
+        if self.show_ratsnest:
+            dc.SetPen(wx.Pen(wx.Colour(80, 80, 80), 1, wx.PENSTYLE_DOT))
+            for net in self.nets:
+                positions = []
+                for pin in net.pins:
+                    if pin["ref"] in self.components:
+                        c = self.components[pin["ref"]]
+                        positions.append(to_px(c.x, c.y))
+                for i in range(len(positions) - 1):
+                    dc.DrawLine(*positions[i], *positions[i + 1])
+
+        # Components
+        for ref, comp in self.components.items():
+            px, py = to_px(comp.x, comp.y)
+            cw = max(6, int((comp.width / bw) * board_px_w * 0.8))
+            ch = max(6, int((comp.height / bh) * board_px_h * 0.8))
+            color = self._get_component_color_rgb(comp)
+            if ref in self.selected_refs:
+                color = wx.Colour(220, 50, 50)
+            dc.SetPen(wx.Pen(wx.BLACK, 1))
+            dc.SetBrush(wx.Brush(color))
+            dc.DrawRectangle(px - cw // 2, py - ch // 2, cw, ch)
+            dc.SetTextForeground(wx.WHITE)
+            dc.SetFont(wx.Font(6, wx.FONTFAMILY_DEFAULT,
+                               wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_NORMAL))
+            dc.DrawText(ref, px - cw // 2, py - ch // 2)
+
+    # ── Helpers (shared) ──────────────────────────────────────────────────────
+
     def _get_component_color(self, comp: ComponentInfo) -> str:
-        """Get color based on component type."""
         if comp.ref.startswith('U'):
             return "blue"
         elif comp.ref.startswith('R'):
@@ -299,12 +399,22 @@ class PlacementPreviewCanvas(NavCanvas.NavCanvas):
             return "yellow"
         elif comp.ref.startswith('L'):
             return "orange"
-        elif comp.ref[0] in 'JP':
+        elif comp.ref[:1] in 'JP':
             return "green"
         return "gray"
-    
+
+    def _get_component_color_rgb(self, comp: ComponentInfo) -> wx.Colour:
+        mapping = {
+            'U': wx.Colour(60, 60, 200),
+            'R': wx.Colour(100, 160, 220),
+            'C': wx.Colour(200, 200, 60),
+            'L': wx.Colour(220, 140, 40),
+            'J': wx.Colour(60, 160, 80),
+            'P': wx.Colour(60, 160, 80),
+        }
+        return mapping.get(comp.ref[:1], wx.Colour(120, 120, 120))
+
     def _get_net_color(self, net: NetInfo) -> str:
-        """Get color based on net type."""
         if net.net_type == NetType.POWER:
             return "red"
         elif net.net_type == NetType.GROUND:
@@ -314,9 +424,15 @@ class PlacementPreviewCanvas(NavCanvas.NavCanvas):
         elif net.net_type == NetType.DIFFERENTIAL:
             return "orange"
         return "lightgray"
-    
+
     def on_size(self, event):
-        self.Canvas.ZoomToBB()
+        if HAS_FLOATCANVAS:
+            try:
+                self.Canvas.ZoomToBB()
+            except Exception:
+                pass
+        else:
+            self.Refresh()
         event.Skip()
 
 
@@ -330,17 +446,41 @@ class AIPlacementPlugin(pcbnew.ActionPlugin):
         self.category = "AI Tools"
         self.description = "Advanced AI-powered placement, routing, and DFM"
         self.show_toolbar_button = True
-        self.icon_file_name = os.path.join(
-            os.path.dirname(__file__), "icon_32x32.png"
-        )
+        icon_path = os.path.join(os.path.dirname(__file__), "icon_32x32.png")
+        self.icon_file_name = icon_path if os.path.exists(icon_path) else ""
     
     def Run(self):
-        """Main entry point."""
+        """Main entry point.
+
+        IMPORTANT: We store the frame on ``self`` so that Python's garbage
+        collector does not destroy it as soon as ``Run()`` returns.  Without
+        this the window flashes briefly and vanishes.
+        """
         board = pcbnew.GetBoard()
         if board is None:
             wx.MessageBox("No board is open.", "Error", wx.OK | wx.ICON_ERROR)
             return
-        
+
+        # If a frame is already open, bring it to the front instead of
+        # creating a duplicate.  We guard with try/except because the C++
+        # wx.Frame object may already have been destroyed by the time Python
+        # tries to call methods on it.
+        existing: Optional["AIPCBFrame"] = getattr(self, "_frame", None)
+        if existing is not None:
+            try:
+                alive = existing and existing.IsShown()
+            except Exception:
+                alive = False
+            if alive:
+                try:
+                    existing.board = board
+                    existing._extract_board_data()
+                    existing.Raise()
+                    return
+                except Exception:
+                    pass
+            self._frame = None  # stale reference — fall through to create new
+
         # Check backend with timeout
         if not self._check_backend():
             dlg = BackendSetupDialog(None)
@@ -348,11 +488,11 @@ class AIPlacementPlugin(pcbnew.ActionPlugin):
                 dlg.Destroy()
                 return
             dlg.Destroy()
-        
-        # Show main window
-        frame = AIPCBFrame(None, board)
-        frame.Show()
-        frame.Raise()
+
+        # Show main window — keep reference alive on self
+        self._frame = AIPCBFrame(None, board)
+        self._frame.Show()
+        self._frame.Raise()
     
     def _check_backend(self) -> bool:
         """Check if backend is available."""
@@ -418,19 +558,64 @@ class BackendSetupDialog(wx.Dialog):
         btn_ok.Bind(wx.EVT_BUTTON, self._on_setup)
     
     def _on_setup(self, event):
-        if self.rb_remote.GetValue():
-            CONFIG.backend_url = self.txt_url.GetValue()
-            CONFIG.save()
-        
+        backend_url = self.txt_url.GetValue().strip() or CONFIG.backend_url
+        CONFIG.backend_url = backend_url
+        CONFIG.save()
+
         if self.chk_install.GetValue() and self.rb_local.GetValue():
             self._install_backend()
-        
-        self.EndModal(wx.ID_OK)
+
+        if self._check_backend():
+            self.EndModal(wx.ID_OK)
+            return
+
+        wx.MessageBox(
+            "Backend is still not reachable. Start it and try again.\n"
+            f"Expected URL: {CONFIG.backend_url}",
+            "Backend Not Reachable",
+            wx.OK | wx.ICON_WARNING,
+        )
+        event.Skip(False)
     
     def _install_backend(self):
         """Trigger backend installation."""
-        # Would download and install backend
-        wx.MessageBox("Backend installation would start here.", "Info")
+        candidate_paths = [
+            os.path.join(os.path.dirname(__file__), "..", "ai_backend", "start_backend.bat"),
+            os.path.join(os.getcwd(), "ai_backend", "start_backend.bat"),
+        ]
+
+        script = next((os.path.abspath(p) for p in candidate_paths if os.path.exists(p)), None)
+        if not script:
+            wx.MessageBox(
+                "Could not find start_backend.bat automatically.\n\n"
+                "Start backend manually:\n"
+                "1) Open terminal in project root\n"
+                "2) cd ai_backend\n"
+                "3) start_backend.bat",
+                "Backend Setup",
+                wx.OK | wx.ICON_INFORMATION,
+            )
+            return
+
+        try:
+            subprocess.Popen(["cmd", "/c", script], cwd=os.path.dirname(script))
+            wx.MessageBox(
+                f"Starting backend:\n{script}\n\n"
+                "Wait a few seconds, then click Setup again.",
+                "Backend Setup",
+                wx.OK | wx.ICON_INFORMATION,
+            )
+        except Exception as exc:
+            wx.MessageBox(f"Failed to start backend:\n{exc}", "Backend Setup Error", wx.OK | wx.ICON_ERROR)
+
+    def _check_backend(self) -> bool:
+        try:
+            req = urllib.request.Request(f"{CONFIG.backend_url}/health", method="GET")
+            with urllib.request.urlopen(req, timeout=3) as resp:
+                data = json.loads(resp.read().decode())
+                return data.get("status") in ("ok", "healthy", "degraded")
+        except Exception:
+            return False
 
 
 # ── Main Application Frame ────────────────────────────────────────────────────
@@ -450,6 +635,7 @@ class AIPCBFrame(wx.Frame):
         self._init_ui()
         self._extract_board_data()
         self._start_refresh_timer()
+        self.Bind(wx.EVT_CLOSE, self._on_close)
     
     def _init_ui(self):
         """Initialize the main UI."""
@@ -497,7 +683,7 @@ class AIPCBFrame(wx.Frame):
     
     def _create_left_panel(self, parent) -> wx.Panel:
         """Create left control panel."""
-        panel = scrolled.ScrolledPanel(parent, size=(400, -1))
+        panel = _ScrolledPanelClass(parent, size=(400, -1))
         sizer = wx.BoxSizer(wx.VERTICAL)
         
         # AI Assistant section
@@ -529,6 +715,7 @@ class AIPCBFrame(wx.Frame):
         self.comp_list.AppendColumn("X", width=50)
         self.comp_list.AppendColumn("Y", width=50)
         self.comp_list.AppendColumn("Fixed", width=50)
+        self.comp_list.Bind(wx.EVT_LIST_ITEM_SELECTED, self._on_component_selected)
         box2_sizer.Add(self.comp_list, 1, wx.EXPAND | wx.ALL, 5)
         
         btn_fix = wx.Button(panel, label="Toggle Fixed")
@@ -551,7 +738,8 @@ class AIPCBFrame(wx.Frame):
         sizer.Add(box3_sizer, 0, wx.EXPAND | wx.ALL, 10)
         
         panel.SetSizer(sizer)
-        panel.SetupScrolling()
+        if hasattr(panel, "SetupScrolling"):
+            panel.SetupScrolling()
         return panel
     
     def _create_right_panel(self, parent) -> wx.Panel:
@@ -561,9 +749,16 @@ class AIPCBFrame(wx.Frame):
         
         # Toolbar for view options
         tb = wx.ToolBar(panel, style=wx.TB_HORIZONTAL)
-        self.chk_ratsnest = tb.AddCheckTool(201, "Show Ratsnest", wx.NullBitmap)
-        self.chk_ratsnest.SetToggle(CONFIG.show_ratsnest)
+        tb.AddCheckTool(201, "Ratsnest", wx.NullBitmap, wx.NullBitmap,
+                        shortHelp="Toggle ratsnest display")
+        tb.Bind(wx.EVT_TOOL, self._on_toggle_ratsnest, id=201)
         tb.Realize()
+        # Set initial state after Realize() (ToggleTool is the wx4 way)
+        try:
+            tb.ToggleTool(201, CONFIG.show_ratsnest)
+        except Exception:
+            pass
+        self._ratsnest_toolbar = tb  # keep reference
         sizer.Add(tb, 0, wx.EXPAND)
         
         # Canvas
@@ -600,6 +795,7 @@ class AIPCBFrame(wx.Frame):
         req_type = self.request_types.pop(req_id, "")
 
         if status == "error":
+            self.info_text.SetValue(f"Request failed:\n{result}")
             self.SetStatusText(f"Error: {result}")
             return
         
@@ -611,67 +807,92 @@ class AIPCBFrame(wx.Frame):
             self._show_generate_result(result)
     
     def _extract_board_data(self):
-        """Extract comprehensive board data."""
+        """Extract comprehensive board data — robust against KiCad API differences."""
         self.components = []
         self.nets = []
-        
+
         # Extract components with detailed info
-        for fp in self.board.GetFootprints():
-            pos = fp.GetPosition()
-            
-            # Get footprint dimensions
-            bbox = fp.GetBoundingBox(False)
-            width = pcbnew.ToMM(bbox.GetWidth())
-            height = pcbnew.ToMM(bbox.GetHeight())
-            
-            # Extract pins
-            pins = []
-            for pad in fp.GetPads():
-                pins.append({
-                    "number": pad.GetNumber(),
-                    "net": pad.GetNetCode(),
-                    "x": pcbnew.ToMM(pad.GetPosition().x),
-                    "y": pcbnew.ToMM(pad.GetPosition().y),
-                })
-            
-            comp = ComponentInfo(
-                ref=fp.GetReference(),
-                value=fp.GetValue(),
-                footprint=fp.GetFPID().GetLibItemName(),
-                x=pcbnew.ToMM(pos.x),
-                y=pcbnew.ToMM(pos.y),
-                rotation=fp.GetOrientationDegrees(),
-                layer="top" if fp.GetLayer() == pcbnew.F_Cu else "bottom",
-                width=width,
-                height=height,
-                pins=pins,
-                is_fixed=fp.IsLocked(),
-            )
-            self.components.append(comp)
-        
-        # Extract nets with classification
-        net_info = self.board.GetNetInfo()
-        for net_name, net in net_info.NetsByName().items():
-            if net.GetNetCode() == 0:
-                continue
-            
-            # Classify net
-            net_type = self._classify_net(net_name)
-            
-            pins = []
-            for pad in net.GetPads():
-                pins.append({
-                    "ref": pad.GetParent().GetReference(),
-                    "pin": pad.GetNumber(),
-                })
-            
-            if len(pins) >= 2:
-                self.nets.append(NetInfo(
-                    name=net_name,
-                    code=net.GetNetCode(),
-                    net_type=net_type,
+        try:
+            footprints = list(self.board.GetFootprints())
+        except Exception as exc:
+            logger.error("GetFootprints failed: %s", exc)
+            footprints = []
+
+        for fp in footprints:
+            try:
+                pos = fp.GetPosition()
+
+                # Get footprint dimensions (API varies across KiCad versions)
+                try:
+                    bbox = fp.GetBoundingBox(False, False)
+                except TypeError:
+                    try:
+                        bbox = fp.GetBoundingBox(False)
+                    except TypeError:
+                        bbox = fp.GetBoundingBox()
+                width = pcbnew.ToMM(bbox.GetWidth())
+                height = pcbnew.ToMM(bbox.GetHeight())
+
+                # Extract pins
+                pins = []
+                for pad in fp.GetPads():
+                    try:
+                        pad_pos = pad.GetPosition()
+                        pins.append({
+                            "number": pad.GetNumber(),
+                            "net": pad.GetNetCode(),
+                            "x": pcbnew.ToMM(pad_pos.x),
+                            "y": pcbnew.ToMM(pad_pos.y),
+                        })
+                    except Exception:
+                        pass
+
+                comp = ComponentInfo(
+                    ref=fp.GetReference(),
+                    value=fp.GetValue(),
+                    footprint=self._get_footprint_name(fp),
+                    x=pcbnew.ToMM(pos.x),
+                    y=pcbnew.ToMM(pos.y),
+                    rotation=self._get_orientation_degrees(fp),
+                    layer="top" if fp.GetLayer() == pcbnew.F_Cu else "bottom",
+                    width=width,
+                    height=height,
                     pins=pins,
-                ))
+                    is_fixed=fp.IsLocked(),
+                )
+                self.components.append(comp)
+            except Exception as exc:
+                logger.warning("Skipping footprint due to error: %s", exc)
+
+        # Extract nets with classification
+        try:
+            net_info = self.board.GetNetInfo()
+            nets_map = net_info.NetsByName()
+            for net_name, net in nets_map.items():
+                try:
+                    if net.GetNetCode() == 0:
+                        continue
+                    net_type = self._classify_net(str(net_name))
+                    pins = []
+                    for pad in net.GetPads():
+                        try:
+                            pins.append({
+                                "ref": pad.GetParent().GetReference(),
+                                "pin": pad.GetNumber(),
+                            })
+                        except Exception:
+                            pass
+                    if len(pins) >= 2:
+                        self.nets.append(NetInfo(
+                            name=str(net_name),
+                            code=net.GetNetCode(),
+                            net_type=net_type,
+                            pins=pins,
+                        ))
+                except Exception as exc:
+                    logger.warning("Skipping net: %s", exc)
+        except Exception as exc:
+            logger.error("Net extraction failed: %s", exc)
         
         # Update UI
         self._update_component_list()
@@ -721,14 +942,33 @@ class AIPCBFrame(wx.Frame):
     
     def _update_canvas(self):
         """Update the visualization canvas."""
+        bbox = self.board.GetBoardEdgesBoundingBox()
+        width_mm = pcbnew.ToMM(bbox.GetWidth())
+        height_mm = pcbnew.ToMM(bbox.GetHeight())
+
+        if width_mm <= 0 or height_mm <= 0:
+            width_mm = max((c.x for c in self.components), default=100.0)
+            height_mm = max((c.y for c in self.components), default=80.0)
+            width_mm = max(40.0, width_mm * 1.2)
+            height_mm = max(40.0, height_mm * 1.2)
+
         self.canvas.set_board_dimensions(
-            pcbnew.ToMM(self.board.GetBoardEdgesBoundingBox().GetWidth()),
-            pcbnew.ToMM(self.board.GetBoardEdgesBoundingBox().GetHeight())
+            width_mm,
+            height_mm,
         )
+        self.canvas.show_ratsnest = CONFIG.show_ratsnest
         self.canvas.update_components(self.components, self.nets)
     
     def _get_board_data_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for backend API."""
+        bbox = self.board.GetBoardEdgesBoundingBox()
+        board_width = pcbnew.ToMM(bbox.GetWidth())
+        board_height = pcbnew.ToMM(bbox.GetHeight())
+        if board_width <= 0:
+            board_width = 100.0
+        if board_height <= 0:
+            board_height = 80.0
+
         return {
             "components": [
                 {
@@ -762,8 +1002,8 @@ class AIPCBFrame(wx.Frame):
                 }
                 for c in self.constraints if c.enabled
             ],
-            "board_width": pcbnew.ToMM(self.board.GetBoardEdgesBoundingBox().GetWidth()),
-            "board_height": pcbnew.ToMM(self.board.GetBoardEdgesBoundingBox().GetHeight()),
+            "board_width": board_width,
+            "board_height": board_height,
         }
     
     def _on_execute_prompt(self, event):
@@ -773,9 +1013,12 @@ class AIPCBFrame(wx.Frame):
             return
         
         self.SetStatusText("Processing request...")
-        
-        data = self._get_board_data_dict()
-        data["prompt"] = prompt
+
+        # /generate expects GenerateRequest, not BoardData
+        data = {
+            "prompt": prompt,
+            "priority": "quality",
+        }
         
         req_id = HTTP_CLIENT.request(
             f"{CONFIG.backend_url}/generate",
@@ -834,15 +1077,11 @@ class AIPCBFrame(wx.Frame):
             wx.MessageBox("Optimization completed but returned no positions.", "Info")
             return
         
-        # Create undo point (API varies by KiCad version)
+        # Create undo point (API varies by KiCad version — skip silently if unavailable)
         try:
-            commit = pcbnew.BOARD_COMMIT()
-            commit.Push("AI Placement Optimization")
+            pcbnew.SaveBoard(self.board.GetFileName(), self.board)
         except Exception:
-            try:
-                pcbnew.SaveCopyInUndoList(self.board, pcbnew.UNDO_REDO_CHANGED)
-            except Exception:
-                pass  # Undo not critical — placement will still be applied
+            pass
         
         # Apply positions
         for fp in self.board.GetFootprints():
@@ -926,18 +1165,96 @@ class AIPCBFrame(wx.Frame):
     
     def _on_toggle_fixed(self, event):
         """Toggle fixed status of selected components."""
-        # Implementation...
-        pass
+        selected = self._get_selected_component_refs()
+        if not selected:
+            wx.MessageBox("Select one or more components in the list first.", "Info")
+            return
+
+        updated = 0
+        for fp in self.board.GetFootprints():
+            if fp.GetReference() in selected:
+                fp.SetLocked(not fp.IsLocked())
+                updated += 1
+
+        if updated:
+            pcbnew.Refresh()
+            self._extract_board_data()
+            self.SetStatusText(f"Updated lock state for {updated} component(s)")
     
     def _on_add_constraint(self, event):
         """Add placement constraint."""
-        # Implementation...
-        pass
+        refs = self._get_selected_component_refs()
+        if not refs:
+            wx.MessageBox("Select component(s) first to create a constraint.", "Info")
+            return
+
+        choices = ["fixed", "spacing"]
+        with wx.SingleChoiceDialog(self, "Constraint type:", "Add Constraint", choices) as dlg:
+            if dlg.ShowModal() != wx.ID_OK:
+                return
+            ctype = choices[dlg.GetSelection()]
+
+        params: Dict[str, Any] = {}
+        if ctype == "spacing":
+            value = wx.GetTextFromUser(
+                "Minimum spacing in mm:",
+                "Spacing Constraint",
+                "1.0",
+                parent=self,
+            )
+            if not value:
+                return
+            try:
+                params["min_mm"] = max(0.1, float(value))
+            except ValueError:
+                wx.MessageBox("Invalid spacing value.", "Error", wx.OK | wx.ICON_ERROR)
+                return
+
+        constraint = Constraint(type=ctype, refs=refs, params=params)
+        self.constraints.append(constraint)
+        self._refresh_constraint_list()
+        self.SetStatusText(f"Added {ctype} constraint for {', '.join(refs)}")
     
     def _on_settings(self, event):
         """Show settings dialog."""
-        # Implementation...
-        pass
+        dialog = wx.Dialog(self, title="AI PCB Assistant Settings", size=(500, 300))
+        panel = wx.Panel(dialog)
+        sizer = wx.BoxSizer(wx.VERTICAL)
+
+        sizer.Add(wx.StaticText(panel, label="Backend URL"), 0, wx.LEFT | wx.TOP, 10)
+        txt_url = wx.TextCtrl(panel, value=CONFIG.backend_url)
+        sizer.Add(txt_url, 0, wx.EXPAND | wx.ALL, 10)
+
+        sizer.Add(wx.StaticText(panel, label="Request timeout (seconds)"), 0, wx.LEFT, 10)
+        txt_timeout = wx.TextCtrl(panel, value=str(CONFIG.request_timeout))
+        sizer.Add(txt_timeout, 0, wx.EXPAND | wx.ALL, 10)
+
+        chk_thermal = wx.CheckBox(panel, label="Thermal-aware placement")
+        chk_thermal.SetValue(CONFIG.thermal_aware)
+        sizer.Add(chk_thermal, 0, wx.ALL, 10)
+
+        chk_ratsnest = wx.CheckBox(panel, label="Show ratsnest in preview")
+        chk_ratsnest.SetValue(CONFIG.show_ratsnest)
+        sizer.Add(chk_ratsnest, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 10)
+
+        btns = dialog.CreateButtonSizer(wx.OK | wx.CANCEL)
+        sizer.Add(btns, 0, wx.EXPAND | wx.ALL, 10)
+        panel.SetSizer(sizer)
+
+        if dialog.ShowModal() == wx.ID_OK:
+            CONFIG.backend_url = txt_url.GetValue().strip() or CONFIG.backend_url
+            try:
+                CONFIG.request_timeout = max(5, int(txt_timeout.GetValue().strip()))
+            except ValueError:
+                wx.MessageBox("Invalid timeout value. Keeping previous setting.", "Warning")
+            CONFIG.thermal_aware = chk_thermal.GetValue()
+            CONFIG.show_ratsnest = chk_ratsnest.GetValue()
+            CONFIG.save()
+            self.canvas.show_ratsnest = CONFIG.show_ratsnest
+            self.canvas._draw()
+            self.SetStatusText("Settings updated")
+
+        dialog.Destroy()
     
     def _on_refresh(self, event):
         """Refresh board data."""
@@ -945,11 +1262,86 @@ class AIPCBFrame(wx.Frame):
     
     def _on_generate_tool(self, event):
         """Generate schematic from description."""
-        # Implementation...
-        pass
+        prompt = wx.GetTextFromUser(
+            "Describe the circuit to generate:",
+            "AI Circuit Generation",
+            "555 timer astable LED blinker",
+            parent=self,
+        )
+        if not prompt:
+            return
+        self.prompt_ctrl.SetValue(prompt)
+        self._on_execute_prompt(event)
     
     def _on_exit(self, event):
         self.Close()
+
+    def _on_close(self, event):
+        if hasattr(self, "timer") and self.timer.IsRunning():
+            self.timer.Stop()
+        event.Skip()
+
+    def _on_toggle_ratsnest(self, event):
+        CONFIG.show_ratsnest = bool(event.IsChecked())
+        CONFIG.save()
+        self.canvas.show_ratsnest = CONFIG.show_ratsnest
+        self.canvas._draw()
+
+    def _on_component_selected(self, event):
+        ref = event.GetText()
+        self.canvas.selected_refs = {ref}
+        self.canvas._draw()
+        self.SetStatusText(f"Selected {ref}")
+        event.Skip()
+
+    def _refresh_constraint_list(self):
+        self.constraint_list.Clear()
+        for idx, constraint in enumerate(self.constraints, start=1):
+            refs = ", ".join(constraint.refs)
+            suffix = ""
+            if constraint.type == "spacing" and "min_mm" in constraint.params:
+                suffix = f" (min={constraint.params['min_mm']} mm)"
+            state = "on" if constraint.enabled else "off"
+            self.constraint_list.Append(f"{idx}. [{state}] {constraint.type}: {refs}{suffix}")
+
+    def _get_selected_component_refs(self) -> List[str]:
+        refs: List[str] = []
+        idx = self.comp_list.GetFirstSelected()
+        while idx != -1:
+            refs.append(self.comp_list.GetItemText(idx))
+            idx = self.comp_list.GetNextSelected(idx)
+        return refs
+
+    @staticmethod
+    def _get_footprint_name(fp: Any) -> str:
+        """Return footprint name as a plain Python string."""
+        try:
+            fpid = fp.GetFPID()
+            if hasattr(fpid, "GetLibItemName"):
+                return str(fpid.GetLibItemName())
+            if hasattr(fpid, "GetUniStringLibItemName"):
+                return str(fpid.GetUniStringLibItemName())
+        except Exception:
+            pass
+        return ""
+
+    @staticmethod
+    def _get_orientation_degrees(fp: Any) -> float:
+        """Get footprint orientation in degrees — compatible with KiCad 7/8/9."""
+        try:
+            # KiCad 7+ returns EDA_ANGLE
+            return fp.GetOrientation().AsDegrees()
+        except AttributeError:
+            pass
+        try:
+            # Older API
+            return fp.GetOrientationDegrees()
+        except AttributeError:
+            pass
+        try:
+            return float(fp.GetOrientation()) / 10.0  # tenths of degree
+        except Exception:
+            return 0.0
 
 
 # ── Legacy Dialog for compatibility ───────────────────────────────────────────
@@ -980,9 +1372,3 @@ class AIAssistantDialog(wx.Dialog):
         self.EndModal(wx.ID_OK)
         frame = AIPCBFrame(None, self.board)
         frame.Show()
-
-
-# ── Registration ─────────────────────────────────────────────────────────────
-
-plugin = AIPlacementPlugin()
-plugin.register()

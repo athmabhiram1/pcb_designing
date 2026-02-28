@@ -31,6 +31,7 @@ env/
 ENV/
 env.bak/
 venv.bak/
+.venv/
 
 # ===========================
 # Node.js / Next.js Frontend
@@ -107,3 +108,20 @@ ehthumbs.db
 *.bak
 *.swp
 *.cache
+
+# ===========================
+# Virtual Environments
+# ===========================
+.venv/
+
+# ===========================
+# PCM Build / Deploy Artifacts
+# ===========================
+.pcm_stage/
+dist/
+*.zip
+
+# ===========================
+# Generated Output JSON
+# ===========================
+ai_backend/output/*.json

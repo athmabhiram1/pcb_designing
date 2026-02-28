@@ -1,153 +1,256 @@
-# AI PCB Assistant for KiCad
+﻿# AI PCB Assistant for KiCad
 
-AI-powered PCB design assistant for KiCad with a local backend.
+An AI-powered PCB design assistant that runs entirely on your local machine, integrated directly into KiCad as an Action Plugin.
 
-It supports:
-- Natural language circuit generation
-- Placement optimization
-- DFM checks
-- KiCad schematic export (`.kicad_sch`)
+**What it does:**
+- Generate circuits from natural language descriptions
+- Optimize component placement
+- Run DFM (Design for Manufacturability) checks
+- Export generated circuits as `.kicad_sch` schematic files
 
-This repository contains both:
-- A KiCad Action Plugin (`plugin/`)
-- A FastAPI backend (`ai_backend/`)
+**AI is powered by [Ollama](https://ollama.com/) running locally — no cloud, no API keys.**
 
 ---
 
-## Repository Layout
+## Repository Structure
 
-- `plugin/` → KiCad Action Plugin UI + board integration
-- `ai_backend/` → FastAPI server + generation/placement/DFM engines
-- `models/` → local AI model assets (GGUF / ONNX)
-- `frontend/` → optional dashboard app (Next.js)
-- `templates/` (inside backend) → deterministic template-based circuit generation
+```
+pcb/
+ plugin/             # KiCad Action Plugin (install this into KiCad)
+    __init__.py         # Package init — triggers plugin registration
+    pcbnew_action.py    # KiCad 9 PCM entry point
+    plugin.py           # Full UI + board integration logic
+    metadata.json       # KiCad PCM package descriptor
+
+ ai_backend/         # FastAPI server + AI engines
+    ai_server.py        # Main FastAPI application
+    circuit_schema.py   # Pydantic models / request schemas
+    requirements.txt    # Python dependencies
+    engines/
+       llm_engine.py       # Ollama / GGUF LLM interface
+       placement_engine.py # Placement optimization
+       dfm_engine.py       # DFM rule checker
+       schematic_engine.py # Circuit graph builder
+       kicad_exporter.py   # .kicad_sch file generator
+    templates/          # Built-in circuit templates
+    output/             # Generated files (gitignored)
+
+ models/             # AI model assets (see models/README.md)
+ frontend/           # Optional Next.js dashboard (not required)
+ build_pcm.ps1       # Script: build versioned PCM ZIP
+ deploy_kicad_plugin.ps1  # Script: fast dev deploy to KiCad
+ dist/               # Built PCM packages (gitignored)
+```
 
 ---
 
 ## System Requirements
 
-### Required
-- KiCad 9.x
-- Python 3.10+
-- Windows 10/11 (primary tested path in this repo)
-
-### Optional (for stronger AI generation)
-- [Ollama](https://ollama.com/) + a coding model (recommended)
-- `llama-cpp-python` + local GGUF model file
-- ONNX Runtime model for RL placement (`placement_model.onnx`)
+| Requirement | Version |
+|-------------|---------|
+| KiCad | 9.x |
+| Python | 3.10 or newer |
+| OS | Windows 10/11 (primary), Linux supported |
+| Ollama | Latest — [ollama.com](https://ollama.com/) |
 
 ---
 
-## How the AI Modes Work
+## Quick Start
 
-The backend can run in multiple modes:
+### Step 1 — Install and start Ollama
 
-1. **Template-only mode (always available)**
-	- Uses built-in templates such as 555 timer, regulator, LED resistor, op-amp buffer.
-	- No external model process required.
-
-2. **Ollama mode (recommended for LLM generation)**
-	- Backend auto-detects Ollama at `http://localhost:11434`.
-	- Uses the first matching model from preferred list (`deepseek-coder`, `codellama`, etc.).
-
-3. **GGUF local mode (`llama-cpp-python`)**
-	- If Ollama is unavailable, backend can fall back to a GGUF file in `models/`.
-	- Default expected filename:
-	  - `deepseek-coder-6.7b-instruct.Q5_K_M.gguf`
-
-4. **RL placement model (optional)**
-	- If ONNX model is present + ONNX runtime available, backend enables RL placement.
-	- Otherwise, placement falls back to analytical/rule-based methods.
-
----
-
-## Quick Start (Windows)
-
-### 1) Install backend dependencies
-
-From repo root:
+Download Ollama from [ollama.com](https://ollama.com/) and install it. Then pull the coding model:
 
 ```powershell
-cd ai_backend
-install.bat
-```
-
-This creates `ai_backend/venv` and installs requirements.
-
-### 2) Start backend
-
-```powershell
-cd ai_backend
-start_backend.bat
-```
-
-Server default:
-- `http://127.0.0.1:8765`
-
-Health check:
-
-```powershell
-Invoke-RestMethod -Uri http://127.0.0.1:8765/health -Method GET
-```
-
-### 3) Install plugin in KiCad
-
-Copy the entire `plugin/` folder to:
-
-- Windows: `%APPDATA%\KiCad\9.0\scripting\plugins\`
-- Linux: `~/.local/share/kicad/9.0/scripting/plugins/`
-
-Then restart KiCad.
-
-### 4) Open plugin in KiCad
-
-- Open a board in KiCad PCB Editor.
-- Launch **AI PCB Assistant Pro** from Action Plugins.
-- Backend URL should be `http://localhost:8765` (default).
-
----
-
-## Model Setup (Detailed)
-
-## A) Ollama setup (recommended)
-
-Install Ollama, then run:
-
-```powershell
-ollama serve
 ollama pull deepseek-coder:6.7b
 ```
 
-The backend will auto-detect available Ollama models.
+Ollama runs as a background service automatically after install. Verify it is up:
 
-Optional env vars:
-- `OLLAMA_API_URL`
-- `OLLAMA_TAGS_URL`
-- `OLLAMA_MODEL`
-
-## B) GGUF setup (`llama-cpp-python`)
-
-Place GGUF model in `models/` (or set `MODELS_DIR`).
-
-Default model filename expected by backend:
-- `deepseek-coder-6.7b-instruct.Q5_K_M.gguf`
-
-Optional env vars:
-- `MODELS_DIR`
-- `LLM_GGUF_MODEL`
-
-## C) RL placement model (ONNX)
-
-If you have an ONNX placement model, place it as:
-- `ai_backend/models/placement_model.onnx`
-
-If missing, backend still works using fallback placement methods.
+```powershell
+Invoke-RestMethod http://localhost:11434/api/tags
+```
 
 ---
 
-## Running the Optional Frontend
+### Step 2 — Set up the backend
 
-The frontend is optional and not required for KiCad plugin flow.
+```powershell
+cd ai_backend
+python -m venv venv
+venv\Scripts\activate
+pip install -r requirements.txt
+```
+
+Start the backend server:
+
+```powershell
+python -m uvicorn ai_server:app --host 0.0.0.0 --port 8765
+```
+
+Verify it is healthy:
+
+```powershell
+Invoke-RestMethod http://127.0.0.1:8765/health
+```
+
+Expected response:
+
+```json
+{
+  "status": "healthy",
+  "version": "2.1.0",
+  "llm_loaded": true,
+  "templates_available": 5
+}
+```
+
+---
+
+### Step 3 — Install the KiCad plugin
+
+Copy the entire `plugin/` folder into KiCad's scripting plugins directory and name it `ai_pcb_assistant`:
+
+**Windows:**
+```
+%APPDATA%\KiCad\9.0\scripting\plugins\ai_pcb_assistant\
+```
+
+**Linux:**
+```
+~/.local/share/kicad/9.0/scripting/plugins/ai_pcb_assistant/
+```
+
+Then **fully restart KiCad**.
+
+Or use the deploy script from repo root (Windows only):
+
+```powershell
+.\deploy_kicad_plugin.ps1
+```
+
+---
+
+### Step 4 — Use the plugin
+
+1. Open a PCB file (`.kicad_pcb`) in KiCad PCB Editor
+2. Go to **Tools  External Plugins  AI PCB Assistant Pro**
+3. Backend URL defaults to `http://localhost:8765`
+
+| Action | Description |
+|--------|-------------|
+| Type a prompt  **Execute** | Generate a circuit or get AI placement advice |
+| Toolbar **Optimize** | Run placement optimization on the current board |
+| Toolbar **DFM Check** | Analyze board for manufacturing issues |
+| Toolbar **Generate** | Open circuit generation dialog |
+
+---
+
+## AI Generation Modes
+
+The backend selects the best available mode automatically:
+
+### Mode 1 — Ollama (recommended, used by default)
+
+Backend auto-detects Ollama at `http://localhost:11434` and picks the first available model:
+
+```
+deepseek-coder:6.7b   recommended
+deepseek-coder:latest
+codellama
+llama3
+mistral
+```
+
+Optional environment variable overrides:
+
+```powershell
+$env:OLLAMA_API_URL = "http://localhost:11434"   # default
+$env:OLLAMA_MODEL   = "deepseek-coder:6.7b"      # force a specific model
+```
+
+### Mode 2 — Template-only (always available, no Ollama needed)
+
+Built-in deterministic templates — works offline with zero AI:
+
+| Template | Description |
+|----------|-------------|
+| 555 Timer | Astable / monostable NE555 |
+| LED Resistor | LED with current limiting resistor |
+| 3.3V Regulator | LDO from 5V or 12V |
+| MOSFET Switch | N-channel low-side switch |
+| Op-Amp Buffer | Unity gain buffer |
+
+### Mode 3 — GGUF local model (optional fallback)
+
+If Ollama is not installed, the backend can use a local GGUF file via `llama-cpp-python`:
+
+```
+models/deepseek-coder-6.7b-instruct.Q5_K_M.gguf
+```
+
+Download link and instructions: `models/README.md`
+
+---
+
+## Backend API Reference
+
+Base URL: `http://127.0.0.1:8765`
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/health` | Server health and capability status |
+| `GET` | `/templates` | List available circuit templates |
+| `POST` | `/generate` | Generate a circuit from a text prompt |
+| `POST` | `/placement/optimize` | Optimize component placement |
+| `POST` | `/dfm/check` | Run DFM analysis |
+| `GET` | `/download/{filename}` | Download generated `.kicad_sch` |
+
+### `/generate` request body
+
+```json
+{
+  "prompt": "555 timer astable LED blinker at 1Hz",
+  "priority": "quality"
+}
+```
+
+`priority` options: `"quality"` | `"speed"` | `"template"`
+
+---
+
+## Development
+
+### Rebuild the PCM ZIP (for distribution)
+
+```powershell
+.\build_pcm.ps1
+```
+
+Output: `dist/pcm/v{version}/ai-pcb-assistant-pcm-v{version}.zip`
+
+Install this ZIP via KiCad  Plugin and Content Manager  **Install from File**.
+
+### Fast dev deploy (direct copy, skip PCM)
+
+```powershell
+.\deploy_kicad_plugin.ps1
+```
+
+Restart KiCad after running this.
+
+### Run smoke tests
+
+```powershell
+cd ai_backend
+python smoke_test.py
+```
+
+---
+
+## Frontend (Optional)
+
+A Next.js dashboard is available but not required for the KiCad plugin workflow.
 
 ```powershell
 cd frontend
@@ -155,111 +258,61 @@ npm install
 npm run dev
 ```
 
-Frontend runs at:
-- `http://localhost:3000`
-
-It currently targets backend at:
-- `http://127.0.0.1:8765`
+Runs at `http://localhost:3000`, targets backend at `http://127.0.0.1:8765`.
 
 ---
 
-## API Endpoints (Backend)
+## Troubleshooting
 
-Base URL: `http://127.0.0.1:8765`
+### Plugin not appearing in KiCad
 
-- `GET /health`
-- `GET /templates`
-- `POST /generate`
-- `POST /placement/optimize`
-- `POST /dfm/check`
-- `GET /download/{filename}`
-- `GET /circuit/{name}`
+- Folder must be named exactly `ai_pcb_assistant` inside the plugins directory
+- Fully restart KiCad (not just "Refresh Plugins")
+- Open the KiCad Scripting Console and run `import ai_pcb_assistant` to see any error
 
----
+### Plugin window closes immediately
 
-## Validate the Setup
+Re-run `.\deploy_kicad_plugin.ps1` then restart KiCad. The root cause (frame garbage-collection) is fixed in the current version.
 
-After backend starts:
+### Backend not reachable
 
 ```powershell
-cd ai_backend
-python smoke_test.py
+Invoke-RestMethod http://127.0.0.1:8765/health
 ```
 
-Expected outcome:
-- Health endpoint responds
-- Templates are listed
-- Generate endpoint returns successful outputs
-- Download endpoint returns generated files
+If unreachable, start the backend (see Step 2 above).
 
----
-
-## Common Troubleshooting
-
-### 1) Port 8765 already in use
-
-Start backend on different port:
+### LLM not loaded / generation falls back to templates
 
 ```powershell
-set PORT=8767
+ollama list          # check what models are available
+ollama pull deepseek-coder:6.7b   # pull if missing
+```
+
+Backend logs will show `LLM engine: Ollama ready` when connected.
+
+### Port 8765 already in use
+
+```powershell
+$env:PORT = "8767"
 python ai_server.py
 ```
 
-Then update plugin backend URL to match.
+Update the URL in plugin Settings to `http://localhost:8767`.
 
-### 2) Plugin opens but actions fail
+### `onnxruntime not installed` warning
 
-Check backend is running:
+Non-critical — RL placement is just disabled. All other features work. To enable:
 
 ```powershell
-Invoke-RestMethod -Uri http://127.0.0.1:8765/health -Method GET
+pip install onnxruntime
 ```
 
-If not running, start `ai_backend/start_backend.bat`.
-
-### 3) LLM not loaded
-
-This is not fatal. Template mode still works.
-
-To enable LLM generation:
-- start Ollama + pull a model, or
-- add GGUF model and ensure `llama-cpp-python` is installed.
-
-### 4) RL placement not loaded
-
-Also not fatal. Placement uses analytical/rule-based fallback.
-
-To enable RL:
-- install ONNX runtime and
-- provide `placement_model.onnx` at expected path.
-
-### 5) KiCad plugin not visible
-
-- Verify plugin folder location is correct for your KiCad version
-- Restart KiCad after copying files
-- Check KiCad plugin manager/logs for import errors
-
 ---
 
-## Development Notes
+## Branch Strategy
 
-- Backend main file: `ai_backend/ai_server.py`
-- Plugin main file: `plugin/plugin.py`
-- KiCad exporter: `ai_backend/engines/kicad_exporter.py`
-- LLM engine: `ai_backend/engines/llm_engine.py`
-- Placement engine: `ai_backend/engines/placement_engine.py`
-
----
-
-## Recommended First Run Path
-
-1. Install and start backend (`install.bat` → `start_backend.bat`)
-2. Verify `GET /health`
-3. Install plugin into KiCad plugins directory
-4. Open a board and launch plugin
-5. Test:
-	- Generate
-	- DFM check
-	- Placement optimize
-
-This gives a fully local KiCad-native workflow.
+| Branch | Purpose |
+|--------|---------|
+| `main` | Stable releases |
+| `testing` | Active development |
