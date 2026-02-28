@@ -1,0 +1,356 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>CircuitMind AI Placement Dashboard</title>
+<!-- Fonts -->
+<link href="https://fonts.googleapis.com" rel="preconnect"/>
+<link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"/>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<!-- Tailwind Config -->
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<script>
+      tailwind.config = {
+        darkMode: "class",
+        theme: {
+          extend: {
+            colors: {
+              primary: "#3b82f6", 
+              "primary-dark": "#1d4ed8",
+              "background-light": "#f5f7f8", 
+              "background-dark": "#0f0f14", 
+              "surface-dark": "#181820",
+              "pcb-green": "#166534",
+              "success": "#22c55e",
+              "border-dark": "#272733"
+            },
+            fontFamily: {
+              display: ["Space Grotesk", "sans-serif"],
+              sans: ["Space Grotesk", "sans-serif"],
+            },
+            borderRadius: {
+                "DEFAULT": "0.25rem", 
+                "lg": "0.5rem", 
+                "xl": "0.75rem", 
+                "full": "9999px"
+            },
+          },
+        },
+      }
+    </script>
+<style>
+        body {
+            font-family: 'Space Grotesk', sans-serif;
+        }
+        .pcb-grid {
+            background-size: 20px 20px;
+            background-image: 
+                linear-gradient(to right, rgba(255, 255, 255, 0.05) 1px, transparent 1px),
+                linear-gradient(to bottom, rgba(255, 255, 255, 0.05) 1px, transparent 1px);
+        }
+        .component-chip {
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.5), 0 2px 4px -1px rgba(0, 0, 0, 0.3);
+            border: 1px solid rgba(255,255,255,0.1);
+        }
+        /* Scrollbar customization for webkit */
+        ::-webkit-scrollbar {
+            width: 8px;
+            height: 8px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #0f0f14; 
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #272733; 
+            border-radius: 4px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: #3b82f6; 
+        }
+    </style>
+</head>
+<body class="bg-background-light dark:bg-background-dark text-slate-900 dark:text-slate-100 h-screen flex overflow-hidden">
+<!-- Left Sidebar -->
+<aside class="w-64 flex-shrink-0 flex flex-col border-r border-border-dark bg-background-dark">
+<div class="p-6 flex items-center gap-3">
+<div class="size-10 rounded-lg bg-gradient-to-br from-primary to-purple-600 flex items-center justify-center shadow-lg shadow-primary/20">
+<span class="material-symbols-outlined text-white">memory</span>
+</div>
+<div>
+<h1 class="text-white font-bold text-lg leading-none">CircuitMind</h1>
+<p class="text-slate-500 text-xs mt-1">AI PCB Platform</p>
+</div>
+</div>
+<nav class="flex-1 flex flex-col gap-1 px-3 py-4">
+<a class="flex items-center gap-3 px-3 py-2.5 rounded-lg text-slate-400 hover:text-white hover:bg-surface-dark transition-colors group" href="#">
+<span class="material-symbols-outlined group-hover:scale-110 transition-transform">home</span>
+<span class="font-medium text-sm">Home</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-2.5 rounded-lg text-slate-400 hover:text-white hover:bg-surface-dark transition-colors group" href="#">
+<span class="material-symbols-outlined group-hover:scale-110 transition-transform">neurology</span>
+<span class="font-medium text-sm">Generate</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-2.5 rounded-lg text-slate-400 hover:text-white hover:bg-surface-dark transition-colors group" href="#">
+<span class="material-symbols-outlined group-hover:scale-110 transition-transform">verified_user</span>
+<span class="font-medium text-sm">DFM Check</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-2.5 rounded-lg bg-primary/10 text-primary border border-primary/20" href="#">
+<span class="material-symbols-outlined">grid_view</span>
+<span class="font-medium text-sm">Placement</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-2.5 rounded-lg text-slate-400 hover:text-white hover:bg-surface-dark transition-colors group" href="#">
+<span class="material-symbols-outlined group-hover:scale-110 transition-transform">description</span>
+<span class="font-medium text-sm">Templates</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-2.5 rounded-lg text-slate-400 hover:text-white hover:bg-surface-dark transition-colors group" href="#">
+<span class="material-symbols-outlined group-hover:scale-110 transition-transform">settings</span>
+<span class="font-medium text-sm">Settings</span>
+</a>
+</nav>
+<div class="p-4 border-t border-border-dark">
+<button class="flex w-full items-center justify-center gap-2 rounded-lg bg-primary py-2.5 text-sm font-bold text-white shadow-lg shadow-primary/20 hover:bg-primary-dark transition-colors">
+<span class="material-symbols-outlined text-[20px]">add</span>
+                New Project
+            </button>
+</div>
+</aside>
+<!-- Main Content -->
+<main class="flex-1 flex flex-col min-w-0 overflow-hidden relative">
+<!-- Header -->
+<header class="h-20 border-b border-border-dark bg-background-dark/80 backdrop-blur-md px-8 flex items-center justify-between shrink-0 z-10">
+<div>
+<h2 class="text-2xl font-bold text-white tracking-tight">Component Placement Optimizer</h2>
+<p class="text-slate-400 text-sm mt-0.5 flex items-center gap-2">
+<span class="w-2 h-2 rounded-full bg-success animate-pulse"></span>
+                    Optimizing for minimal routing length and thermal performance
+                </p>
+</div>
+<div class="flex items-center gap-4">
+<div class="px-3 py-1.5 rounded bg-surface-dark border border-border-dark text-xs text-slate-400 font-mono">
+                    ID: #PCB-8821X
+                </div>
+<div class="h-8 w-8 rounded-full bg-slate-700 bg-cover bg-center border border-slate-600" data-alt="User avatar profile picture" style="background-image: url('https://lh3.googleusercontent.com/aida-public/AB6AXuAVSEI66GlUxE4DyfzJalQ76Z6APqlpXSBdYyg0eSH2OK-JjdxMiMe7lT3juDIuPkY2_-ZtJov8qZe-QkaxSH_GMpng8spjTBLYCuxNmEOK_HyJB8O2v0NRg2uh-tqGLzD-qAZjM9gCuQsh9rMOyKfLj0_Lo0wyd_OxOoVp5ryMqvj9VwHbBZyeupMx8yXsuaDKrkSdxGh9cIksdVO1jv6av1ePLnYknkhRXGN6NsRGaM5hJFwRubD0nCmDO21nc4fk9Oo7UMAuK2c')"></div>
+</div>
+</header>
+<!-- Scrollable Content Area -->
+<div class="flex-1 overflow-auto p-6 md:p-8">
+<div class="grid grid-cols-1 xl:grid-cols-12 gap-6 h-full min-h-[600px]">
+<!-- Left Panel: PCB Visualization -->
+<div class="xl:col-span-8 flex flex-col gap-4">
+<!-- Controls -->
+<div class="flex items-center justify-between bg-surface-dark p-2 rounded-lg border border-border-dark">
+<div class="flex bg-background-dark rounded p-1 border border-border-dark">
+<button class="px-4 py-1.5 rounded text-sm font-medium text-slate-400 hover:text-white transition-colors">Before (Scattered)</button>
+<button class="px-4 py-1.5 rounded bg-primary text-white text-sm font-medium shadow-sm">After (Organized)</button>
+</div>
+<div class="flex items-center gap-4 pr-2">
+<span class="text-xs text-slate-500 font-mono">Grid: 1mm</span>
+<span class="text-xs text-slate-500 font-mono">Zoom: 100%</span>
+<div class="flex gap-1">
+<button class="p-1 text-slate-400 hover:text-white"><span class="material-symbols-outlined text-[18px]">remove</span></button>
+<button class="p-1 text-slate-400 hover:text-white"><span class="material-symbols-outlined text-[18px]">add</span></button>
+</div>
+</div>
+</div>
+<!-- PCB Canvas -->
+<div class="flex-1 bg-[#0a0f0a] border border-border-dark rounded-xl relative overflow-hidden group pcb-grid flex items-center justify-center min-h-[500px]">
+<!-- Board Outline -->
+<div class="relative w-[600px] h-[480px] bg-pcb-green/20 border-2 border-pcb-green rounded-lg shadow-[0_0_50px_rgba(22,101,52,0.1)] backdrop-blur-sm">
+<!-- Trace decorations -->
+<svg class="absolute inset-0 w-full h-full opacity-20 pointer-events-none" xmlns="http://www.w3.org/2000/svg">
+<path d="M50 50 L100 50 L120 80 L300 80" fill="none" stroke="#22c55e" stroke-width="2"></path>
+<path d="M550 430 L500 430 L480 400 L300 400" fill="none" stroke="#22c55e" stroke-width="2"></path>
+<circle cx="50" cy="50" fill="#22c55e" r="3"></circle>
+<circle cx="550" cy="430" fill="#22c55e" r="3"></circle>
+</svg>
+<!-- Board Label -->
+<div class="absolute bottom-2 right-4 text-pcb-green text-xs font-mono font-bold opacity-60">100mm x 80mm</div>
+<!-- Components (After State) -->
+<!-- U1: Large Microcontroller -->
+<div class="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-32 h-32 bg-slate-900 border border-slate-700 rounded component-chip flex flex-col items-center justify-center group/chip z-10">
+<div class="text-slate-500 text-[10px] mb-1">ATMega328</div>
+<div class="text-white font-mono text-xs font-bold">U1</div>
+<div class="absolute -top-1 left-1/2 -translate-x-1/2 w-20 h-[2px] bg-slate-600"></div>
+<div class="absolute -bottom-1 left-1/2 -translate-x-1/2 w-20 h-[2px] bg-slate-600"></div>
+<div class="absolute -left-1 top-1/2 -translate-y-1/2 h-20 w-[2px] bg-slate-600"></div>
+<div class="absolute -right-1 top-1/2 -translate-y-1/2 h-20 w-[2px] bg-slate-600"></div>
+<!-- Heatmap overlay hint -->
+<div class="absolute inset-0 bg-red-500/10 rounded opacity-0 group-hover/chip:opacity-100 transition-opacity pointer-events-none"></div>
+</div>
+<!-- R1-R3: Resistors -->
+<div class="absolute top-[30%] left-[20%] w-8 h-4 bg-orange-900/80 border border-orange-700 rounded-sm component-chip flex items-center justify-center">
+<span class="text-[8px] text-orange-200 font-mono">R1</span>
+</div>
+<div class="absolute top-[35%] left-[20%] w-8 h-4 bg-orange-900/80 border border-orange-700 rounded-sm component-chip flex items-center justify-center">
+<span class="text-[8px] text-orange-200 font-mono">R2</span>
+</div>
+<div class="absolute top-[40%] left-[20%] w-8 h-4 bg-orange-900/80 border border-orange-700 rounded-sm component-chip flex items-center justify-center">
+<span class="text-[8px] text-orange-200 font-mono">R3</span>
+</div>
+<!-- C1-C3: Capacitors -->
+<div class="absolute bottom-[30%] right-[20%] w-6 h-8 bg-yellow-900/80 border border-yellow-700 rounded-sm component-chip flex items-center justify-center">
+<span class="text-[8px] text-yellow-200 font-mono">C1</span>
+</div>
+<div class="absolute bottom-[30%] right-[26%] w-6 h-8 bg-yellow-900/80 border border-yellow-700 rounded-sm component-chip flex items-center justify-center">
+<span class="text-[8px] text-yellow-200 font-mono">C2</span>
+</div>
+<div class="absolute bottom-[30%] right-[32%] w-6 h-8 bg-yellow-900/80 border border-yellow-700 rounded-sm component-chip flex items-center justify-center">
+<span class="text-[8px] text-yellow-200 font-mono">C3</span>
+</div>
+<!-- D1: LED -->
+<div class="absolute top-[15%] right-[15%] w-6 h-6 rounded-full bg-red-900/50 border border-red-500 flex items-center justify-center component-chip shadow-[0_0_10px_rgba(239,68,68,0.4)]">
+<span class="material-symbols-outlined text-[14px] text-red-500">light_mode</span>
+</div>
+<div class="absolute top-[18%] right-[12%] text-[10px] text-red-400 font-mono">D1</div>
+</div>
+</div>
+</div>
+<!-- Right Panel: Results & Tools -->
+<div class="xl:col-span-4 flex flex-col gap-6">
+<!-- Run Optimization Card -->
+<div class="bg-surface-dark border border-border-dark rounded-xl p-5 shadow-lg relative overflow-hidden">
+<div class="absolute top-0 right-0 p-3 opacity-10">
+<span class="material-symbols-outlined text-6xl text-primary">psychology</span>
+</div>
+<div class="flex items-center gap-2 mb-4">
+<span class="bg-primary/20 text-primary text-xs px-2 py-0.5 rounded border border-primary/30 font-medium">Auto-Place v2.1</span>
+<span class="text-xs text-slate-500">Simulated Annealing + Force-Directed</span>
+</div>
+<button class="w-full relative overflow-hidden bg-primary hover:bg-primary-dark text-white font-bold py-3 px-4 rounded-lg shadow-[0_0_20px_rgba(59,130,246,0.4)] transition-all group">
+<span class="relative z-10 flex items-center justify-center gap-2">
+<span class="material-symbols-outlined animate-spin" style="font-size: 20px;">sync</span>
+                                Run Optimization
+                            </span>
+<div class="absolute inset-0 bg-gradient-to-r from-transparent via-white/20 to-transparent -translate-x-full group-hover:animate-[shimmer_1.5s_infinite]"></div>
+</button>
+<div class="mt-3 flex justify-between items-center text-xs">
+<span class="text-slate-400">Status: <span class="text-success">Converged</span></span>
+<span class="font-mono text-slate-500">1,250 iters / 2.1s</span>
+</div>
+</div>
+<!-- Metrics Grid -->
+<div class="grid grid-cols-2 gap-4">
+<div class="bg-surface-dark border border-border-dark p-4 rounded-xl flex flex-col gap-1">
+<div class="text-slate-400 text-xs font-medium">Wire Length</div>
+<div class="flex items-end gap-2">
+<span class="text-2xl font-bold text-white">32%</span>
+<span class="text-success text-xs mb-1 font-medium">↓ Reduced</span>
+</div>
+<div class="w-full bg-slate-800 h-1 mt-2 rounded-full overflow-hidden">
+<div class="bg-success h-full w-[68%]"></div>
+</div>
+</div>
+<div class="bg-surface-dark border border-border-dark p-4 rounded-xl flex flex-col gap-1">
+<div class="text-slate-400 text-xs font-medium">Spacing Violations</div>
+<div class="flex items-end gap-2">
+<span class="text-2xl font-bold text-white">0</span>
+<span class="text-success text-xs mb-1 font-medium"><span class="material-symbols-outlined text-[14px] align-text-bottom">check_circle</span> Pass</span>
+</div>
+<div class="w-full bg-slate-800 h-1 mt-2 rounded-full overflow-hidden">
+<div class="bg-success h-full w-full"></div>
+</div>
+</div>
+<div class="bg-surface-dark border border-border-dark p-4 rounded-xl flex flex-col gap-1">
+<div class="text-slate-400 text-xs font-medium">Thermal Dist.</div>
+<div class="flex items-end gap-2">
+<span class="text-2xl font-bold text-white">A</span>
+<span class="text-success text-xs mb-1 font-medium">Rating</span>
+</div>
+<div class="w-full bg-slate-800 h-1 mt-2 rounded-full overflow-hidden">
+<div class="bg-pcb-green h-full w-[95%]"></div>
+</div>
+</div>
+<div class="bg-surface-dark border border-border-dark p-4 rounded-xl flex flex-col gap-1">
+<div class="text-slate-400 text-xs font-medium">Routability Score</div>
+<div class="flex items-end gap-2">
+<span class="text-2xl font-bold text-white">94%</span>
+<span class="text-primary text-xs mb-1 font-medium">High</span>
+</div>
+<div class="w-full bg-slate-800 h-1 mt-2 rounded-full overflow-hidden">
+<div class="bg-primary h-full w-[94%]"></div>
+</div>
+</div>
+</div>
+<!-- Component Movement Table -->
+<div class="bg-surface-dark border border-border-dark rounded-xl flex-1 flex flex-col overflow-hidden min-h-[200px]">
+<div class="p-4 border-b border-border-dark flex justify-between items-center bg-slate-800/20">
+<h3 class="text-sm font-semibold text-white">Placement Details</h3>
+<button class="text-primary hover:text-primary-dark text-xs font-medium">Export CSV</button>
+</div>
+<div class="overflow-x-auto">
+<table class="w-full text-left text-xs">
+<thead class="text-slate-500 font-medium bg-slate-900/50">
+<tr>
+<th class="px-4 py-3">Ref</th>
+<th class="px-4 py-3">Before (x,y)</th>
+<th class="px-4 py-3">After (x,y)</th>
+<th class="px-4 py-3 text-right">Δ Move</th>
+</tr>
+</thead>
+<tbody class="divide-y divide-border-dark text-slate-300">
+<tr class="hover:bg-slate-800/30 transition-colors">
+<td class="px-4 py-3 font-mono text-primary">U1</td>
+<td class="px-4 py-3 font-mono text-slate-500">10, 10</td>
+<td class="px-4 py-3 font-mono">50, 40</td>
+<td class="px-4 py-3 text-right font-mono text-orange-400">42mm</td>
+</tr>
+<tr class="hover:bg-slate-800/30 transition-colors">
+<td class="px-4 py-3 font-mono text-primary">R1</td>
+<td class="px-4 py-3 font-mono text-slate-500">82, 15</td>
+<td class="px-4 py-3 font-mono">20, 24</td>
+<td class="px-4 py-3 text-right font-mono text-orange-400">62mm</td>
+</tr>
+<tr class="hover:bg-slate-800/30 transition-colors">
+<td class="px-4 py-3 font-mono text-primary">R2</td>
+<td class="px-4 py-3 font-mono text-slate-500">90, 80</td>
+<td class="px-4 py-3 font-mono">20, 28</td>
+<td class="px-4 py-3 text-right font-mono text-orange-400">88mm</td>
+</tr>
+<tr class="hover:bg-slate-800/30 transition-colors">
+<td class="px-4 py-3 font-mono text-primary">C1</td>
+<td class="px-4 py-3 font-mono text-slate-500">12, 55</td>
+<td class="px-4 py-3 font-mono">80, 56</td>
+<td class="px-4 py-3 text-right font-mono text-orange-400">68mm</td>
+</tr>
+<tr class="hover:bg-slate-800/30 transition-colors">
+<td class="px-4 py-3 font-mono text-primary">D1</td>
+<td class="px-4 py-3 font-mono text-slate-500">40, 40</td>
+<td class="px-4 py-3 font-mono">85, 12</td>
+<td class="px-4 py-3 text-right font-mono text-orange-400">53mm</td>
+</tr>
+</tbody>
+</table>
+</div>
+</div>
+</div>
+</div>
+</div>
+<!-- Status Bar -->
+<footer class="h-10 border-t border-border-dark bg-background-dark text-slate-500 text-xs px-6 flex items-center justify-between shrink-0">
+<div class="flex items-center gap-6">
+<span class="flex items-center gap-2">
+<span class="w-1.5 h-1.5 rounded-full bg-success"></span>
+                    Backend: Connected
+                </span>
+<span class="flex items-center gap-2">
+<span class="material-symbols-outlined text-[14px]">memory</span>
+                    Placement Engine: Rule-based (v1.2)
+                </span>
+</div>
+<div class="flex items-center gap-6 font-mono">
+<span>Board: 100x80mm</span>
+<span>Layer Stack: 4-Layer</span>
+<span>DRC: Active</span>
+</div>
+</footer>
+</main>
+<!-- Tailwind Custom Animation -->
+<style>
+        @keyframes shimmer {
+            100% { transform: translateX(100%); }
+        }
+    </style>
+</body></html>

@@ -1,0 +1,69 @@
+{
+  "description": "3.3V LDO Voltage Regulator — AMS1117-3.3 from 5V input with input/output decoupling capacitors",
+  "components": [
+    {
+      "ref": "U1",
+      "lib": "Regulator_Linear",
+      "part": "AMS1117-3.3",
+      "value": "AMS1117-3.3",
+      "footprint": "Package_TO_SOT_SMD:SOT-223-3_TabPin2",
+      "description": "AMS1117-3.3 LDO voltage regulator, 3.3V 1A output",
+      "pins": [
+        {"number": "1", "name": "GND"},
+        {"number": "2", "name": "OUT"},
+        {"number": "3", "name": "IN"}
+      ]
+    },
+    {
+      "ref": "C1",
+      "lib": "Device",
+      "part": "C",
+      "value": "10uF",
+      "footprint": "Capacitor_SMD:C_0805_2012Metric",
+      "description": "Input bulk capacitor",
+      "pins": [{"number": "1", "name": "+"}, {"number": "2", "name": "-"}]
+    },
+    {
+      "ref": "C2",
+      "lib": "Device",
+      "part": "C",
+      "value": "100nF",
+      "footprint": "Capacitor_SMD:C_0402_1005Metric",
+      "description": "Input HF decoupling capacitor",
+      "pins": [{"number": "1", "name": "+"}, {"number": "2", "name": "-"}]
+    },
+    {
+      "ref": "C3",
+      "lib": "Device",
+      "part": "C",
+      "value": "10uF",
+      "footprint": "Capacitor_SMD:C_0805_2012Metric",
+      "description": "Output bulk capacitor",
+      "pins": [{"number": "1", "name": "+"}, {"number": "2", "name": "-"}]
+    },
+    {
+      "ref": "C4",
+      "lib": "Device",
+      "part": "C",
+      "value": "100nF",
+      "footprint": "Capacitor_SMD:C_0402_1005Metric",
+      "description": "Output HF decoupling capacitor",
+      "pins": [{"number": "1", "name": "+"}, {"number": "2", "name": "-"}]
+    }
+  ],
+  "connections": [
+    {"net": "VIN",  "pins": ["U1.3", "C1.1", "C2.1"]},
+    {"net": "+3V3", "pins": ["U1.2", "C3.1", "C4.1"]},
+    {"net": "GND",  "pins": ["U1.1", "C1.2", "C2.2", "C3.2", "C4.2"]}
+  ],
+  "board_width": 60.0,
+  "board_height": 40.0,
+  "metadata": {
+    "author": "AI PCB Assistant",
+    "version": "1.0",
+    "category": "power",
+    "input_voltage": "4.5-12V",
+    "output_voltage": "3.3V",
+    "max_current": "1A"
+  }
+}

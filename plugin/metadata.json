@@ -1,0 +1,32 @@
+{
+    "$schema": "https://go.kicad.org/pcm/schemas/v1",
+    "name": "AI PCB Assistant",
+    "description": "AI-powered schematic generation and placement optimization",
+    "description_full": "An AI assistant that generates schematics from natural language, optimizes component placement using reinforcement learning, and provides real-time DFM feedback.",
+    "identifier": "com.github.ai-pcb-assistant",
+    "type": "plugin",
+    "author": {
+        "name": "AI PCB Team",
+        "contact": {
+            "web": "https://github.com/ai-pcb-assistant"
+        }
+    },
+    "maintainer": {
+        "name": "AI PCB Team",
+        "contact": {
+            "web": "https://github.com/ai-pcb-assistant"
+        }
+    },
+    "license": "MIT",
+    "resources": {
+        "homepage": "https://github.com/ai-pcb-assistant"
+    },
+    "versions": [
+        {
+            "version": "0.1.0",
+            "status": "development",
+            "kicad_version": "9.0",
+            "runtime": "swig"
+        }
+    ]
+}

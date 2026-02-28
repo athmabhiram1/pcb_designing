@@ -1,0 +1,421 @@
+<!DOCTYPE html>
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>CircuitMind AI - Expert Grade</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&amp;family=JetBrains+Mono:wght@400;500;600&amp;family=Space+Grotesk:wght@500;700&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script>
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        primary: "#0ea5e9", // Cyan 500
+                        secondary: "#6366f1", // Indigo 500
+                        accent: "#06b6d4", // Cyan 500
+                        dark: {
+                            900: "#020408", // Almost black
+                            800: "#090b14", // Very dark blue/grey
+                            700: "#131620", // Card bg
+                        },
+                        border: {
+                            subtle: "rgba(255,255,255,0.08)",
+                            active: "rgba(14, 165, 233, 0.4)",
+                        }
+                    },
+                    fontFamily: {
+                        sans: ["Inter", "sans-serif"],
+                        display: ["Space Grotesk", "sans-serif"],
+                        mono: ["JetBrains Mono", "monospace"],
+                    },
+                    backgroundImage: {
+                        'grid-pattern': "linear-gradient(to right, #1f2937 1px, transparent 1px), linear-gradient(to bottom, #1f2937 1px, transparent 1px)",
+                    },
+                    animation: {
+                        'pulse-slow': 'pulse 4s cubic-bezier(0.4, 0, 0.6, 1) infinite',
+                    }
+                },
+            },
+        }
+    </script>
+<style>
+        body {
+            background-color: #020408;
+            color: #e2e8f0;
+            font-family: 'Inter', sans-serif;
+            -webkit-font-smoothing: antialiased;
+        }.bento-grid {
+            background-size: 40px 40px;
+            background-image: 
+                linear-gradient(to right, rgba(255, 255, 255, 0.03) 1px, transparent 1px),
+                linear-gradient(to bottom, rgba(255, 255, 255, 0.03) 1px, transparent 1px);
+            mask-image: radial-gradient(circle at center, black 40%, transparent 100%);
+            -webkit-mask-image: radial-gradient(circle at center, black 40%, transparent 100%);
+        }
+        .glass-nav {
+            background: rgba(2, 4, 8, 0.7);
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+            border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+        }
+        .mech-btn {
+            position: relative;
+            background: rgba(14, 165, 233, 0.1);
+            border: 1px solid rgba(14, 165, 233, 0.3);
+            color: #0ea5e9;
+            transition: all 0.1s ease;
+            box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+        }
+        .mech-btn:hover {
+            background: rgba(14, 165, 233, 0.2);
+            border-color: #0ea5e9;
+            text-shadow: 0 0 8px rgba(14, 165, 233, 0.5);
+            transform: translateY(-1px);
+        }
+        .mech-btn-primary {
+            background: #0ea5e9;
+            color: #000;
+            border: 1px solid #38bdf8;
+            box-shadow: 0 2px 0 #0284c7, inset 0 1px 0 rgba(255, 255, 255, 0.3);
+            transition: all 0.1s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        .mech-btn-primary:hover {
+            background: #38bdf8;
+            transform: translateY(-1px);
+            box-shadow: 0 4px 10px rgba(14, 165, 233, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.3);
+        }
+        .mech-btn-primary:active {
+            transform: translateY(1px);
+            box-shadow: 0 0 0 transparent;
+        }
+        .tech-border {
+            position: relative;
+        }
+        .tech-border::before, .tech-border::after {
+            content: '';
+            position: absolute;
+            width: 4px;
+            height: 4px;
+            background-color: rgba(255, 255, 255, 0.2);
+            transition: background-color 0.3s ease;
+        }
+        .tech-border:hover::before, .tech-border:hover::after {
+            background-color: #0ea5e9;
+        }
+        .tech-border::before { top: -1px; left: -1px; }
+        .tech-border::after { bottom: -1px; right: -1px; }
+        .scan-line {
+            position: absolute;
+            width: 100%;
+            height: 1px;
+            background: linear-gradient(90deg, transparent, rgba(14, 165, 233, 0.8), transparent);
+            top: 0;
+            left: 0;
+            animation: scan 4s linear infinite;
+            opacity: 0.5;
+        }
+        @keyframes scan {
+            0% { top: 0%; opacity: 0; }
+            10% { opacity: 1; }
+            90% { opacity: 1; }
+            100% { top: 100%; opacity: 0; }
+        }
+        .circuit-node {
+            width: 8px;
+            height: 8px;
+            background-color: #0ea5e9;
+            border-radius: 50%;
+            box-shadow: 0 0 10px #0ea5e9;
+        }
+        .text-glow {
+            text-shadow: 0 0 20px rgba(14, 165, 233, 0.3);
+        }
+        .micro-copy {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.65rem;
+            letter-spacing: 0.05em;
+            text-transform: uppercase;
+            color: rgba(148, 163, 184, 0.6);
+        }
+    </style>
+</head>
+<body class="bg-[#020408] text-slate-200 antialiased selection:bg-primary/30 selection:text-white overflow-x-hidden">
+<div class="fixed inset-0 z-0 pointer-events-none bento-grid opacity-40"></div>
+<div class="fixed top-0 left-1/4 w-[500px] h-[500px] bg-indigo-900/10 rounded-full blur-[120px] pointer-events-none z-0"></div>
+<div class="fixed bottom-0 right-1/4 w-[500px] h-[500px] bg-primary/5 rounded-full blur-[120px] pointer-events-none z-0"></div>
+<div class="relative z-10 flex flex-col min-h-screen">
+<header class="fixed top-0 left-0 right-0 z-50 glass-nav h-14 flex items-center">
+<div class="w-full max-w-7xl mx-auto px-6 lg:px-8 flex items-center justify-between">
+<div class="flex items-center gap-3 group cursor-pointer">
+<div class="relative flex h-6 w-6 items-center justify-center rounded bg-primary/10 border border-primary/20 text-primary group-hover:border-primary/50 transition-colors">
+<span class="material-symbols-outlined text-[16px]">hub</span>
+<div class="absolute -top-1 -right-1 w-1 h-1 bg-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity"></div>
+</div>
+<span class="text-sm font-bold tracking-tight text-white font-display uppercase tracking-wider group-hover:text-primary transition-colors">CircuitMind<span class="text-primary">.ai</span></span>
+<span class="hidden sm:inline-block px-1.5 py-0.5 rounded text-[9px] font-mono bg-white/5 text-slate-400 border border-white/5 ml-2">v3.0.1</span>
+</div>
+<nav class="hidden lg:flex items-center gap-1">
+<a class="px-4 py-1.5 text-xs font-medium text-slate-400 hover:text-white hover:bg-white/5 rounded transition-all font-mono" href="#">Features</a>
+<a class="px-4 py-1.5 text-xs font-medium text-slate-400 hover:text-white hover:bg-white/5 rounded transition-all font-mono" href="#">Methodology</a>
+<a class="px-4 py-1.5 text-xs font-medium text-slate-400 hover:text-white hover:bg-white/5 rounded transition-all font-mono" href="#">Engine</a>
+<a class="px-4 py-1.5 text-xs font-medium text-slate-400 hover:text-white hover:bg-white/5 rounded transition-all font-mono" href="#">Enterprise</a>
+</nav>
+<div class="flex items-center gap-4">
+<a class="hidden sm:block text-xs font-medium text-slate-400 hover:text-white transition-colors font-mono" href="#">Sign in</a>
+<button class="mech-btn-primary px-4 py-1.5 text-xs font-bold uppercase tracking-wide rounded-sm flex items-center gap-2 group">
+<span>Deploy Demo</span>
+<span class="material-symbols-outlined text-[14px] group-hover:translate-x-0.5 transition-transform">chevron_right</span>
+</button>
+</div>
+</div>
+</header>
+<main class="flex-grow pt-32 pb-20">
+<div class="mx-auto max-w-7xl px-6 lg:px-8">
+<div class="relative flex flex-col lg:flex-row items-center gap-12 lg:gap-20 py-8 lg:py-16">
+<div class="flex-1 text-left z-10">
+<div class="inline-flex items-center gap-2 mb-6 px-2 py-1 bg-white/5 border border-white/10 rounded-full backdrop-blur-sm">
+<span class="flex h-1.5 w-1.5 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.8)]"></span>
+<span class="text-[10px] font-mono font-medium text-emerald-400 tracking-wide uppercase">System Operational</span>
+</div>
+<h1 class="text-5xl sm:text-6xl lg:text-7xl font-bold tracking-tight text-white mb-6 leading-[1.1] font-display">
+                            Engineer the <br/>
+<span class="text-transparent bg-clip-text bg-gradient-to-r from-cyan-400 via-blue-500 to-indigo-500 text-glow">Future of Hardware</span>
+</h1>
+<p class="text-lg text-slate-400 mb-10 max-w-xl leading-relaxed font-light border-l-2 border-white/10 pl-6">
+                            Generative schematic design for senior engineers. <span class="text-slate-200 font-medium">Zero hallucination</span>. Production-ready netlists, BOMs, and PCB layouts in milliseconds.
+                        </p>
+<div class="flex flex-col sm:flex-row gap-4 mb-12">
+<button class="mech-btn-primary h-12 px-8 flex items-center justify-center gap-2 rounded-sm font-bold text-sm uppercase tracking-wide w-full sm:w-auto">
+<span class="material-symbols-outlined text-[18px]">bolt</span>
+                                Initialize Project
+                            </button>
+<button class="mech-btn h-12 px-8 flex items-center justify-center gap-2 rounded-sm font-bold text-sm uppercase tracking-wide w-full sm:w-auto bg-[#090b14] border border-slate-700 text-slate-300 hover:text-white hover:border-slate-500">
+<span class="material-symbols-outlined text-[18px]">terminal</span>
+                                View Documentation
+                            </button>
+</div>
+<div class="grid grid-cols-3 gap-6 pt-8 border-t border-white/5">
+<div>
+<div class="text-2xl font-mono font-bold text-white mb-1">99.9%</div>
+<div class="text-[10px] font-mono text-slate-500 uppercase tracking-wider">Netlist Accuracy</div>
+</div>
+<div>
+<div class="text-2xl font-mono font-bold text-white mb-1">&lt;20ms</div>
+<div class="text-[10px] font-mono text-slate-500 uppercase tracking-wider">Generation Latency</div>
+</div>
+<div>
+<div class="text-2xl font-mono font-bold text-white mb-1">IPC</div>
+<div class="text-[10px] font-mono text-slate-500 uppercase tracking-wider">Standard Compliant</div>
+</div>
+</div>
+</div>
+<div class="flex-1 w-full relative group">
+<div class="absolute -top-8 right-0 font-mono text-[10px] text-slate-500">
+                            RENDER_ENGINE: WEBGL_2.0 // FPS: 60
+                        </div>
+<div class="absolute -bottom-8 left-0 font-mono text-[10px] text-slate-500">
+                            SESSION_ID: 0x8F2A9C // SECURE
+                        </div>
+<div class="relative aspect-square md:aspect-[4/3] rounded bg-[#05060a] border border-white/10 overflow-hidden shadow-2xl shadow-indigo-500/10 tech-border">
+<div class="absolute inset-0" style="background-image: radial-gradient(#1e293b 1px, transparent 1px); background-size: 20px 20px; opacity: 0.3;"></div>
+<div class="scan-line z-20"></div>
+<div class="absolute top-0 left-0 right-0 h-10 border-b border-white/10 bg-[#05060a]/90 backdrop-blur flex items-center justify-between px-4 z-30">
+<div class="flex items-center gap-2">
+<div class="w-2 h-2 rounded-full bg-red-500/50"></div>
+<div class="w-2 h-2 rounded-full bg-yellow-500/50"></div>
+<div class="w-2 h-2 rounded-full bg-green-500/50"></div>
+</div>
+<div class="font-mono text-[10px] text-primary">PROJECT_ALPHA.PCB</div>
+<div class="flex gap-2">
+<span class="w-3 h-3 border border-white/20 rounded-sm"></span>
+<span class="w-3 h-3 border border-white/20 rounded-sm bg-white/10"></span>
+</div>
+</div>
+<div class="absolute top-10 right-0 bottom-0 w-16 border-l border-white/10 bg-[#05060a]/80 backdrop-blur z-30 flex flex-col items-center py-4 gap-4">
+<span class="material-symbols-outlined text-slate-500 text-sm p-1 hover:text-primary cursor-pointer">layers</span>
+<span class="material-symbols-outlined text-slate-500 text-sm p-1 hover:text-primary cursor-pointer">memory</span>
+<span class="material-symbols-outlined text-primary text-sm p-1 bg-primary/10 rounded">timeline</span>
+<span class="material-symbols-outlined text-slate-500 text-sm p-1 hover:text-primary cursor-pointer">settings</span>
+</div>
+<div class="absolute inset-0 p-12 flex items-center justify-center">
+<div class="relative w-32 h-32 bg-[#0f172a] border border-indigo-500/30 flex items-center justify-center z-10 shadow-[0_0_30px_rgba(99,102,241,0.15)]">
+<div class="absolute inset-0 border border-white/5 m-1"></div>
+<span class="material-symbols-outlined text-4xl text-indigo-400">computer</span>
+<div class="absolute top-1/2 -right-24 w-24 h-[1px] bg-gradient-to-r from-indigo-500/50 to-cyan-500/50"></div>
+<div class="absolute top-1/2 -left-24 w-24 h-[1px] bg-gradient-to-r from-cyan-500/50 to-indigo-500/50"></div>
+<div class="absolute -bottom-20 left-1/2 w-[1px] h-20 bg-gradient-to-b from-indigo-500/50 to-cyan-500/50"></div>
+<div class="absolute top-1/2 -right-24 transform translate-x-1/2 -translate-y-1/2 w-2 h-2 bg-cyan-500 rounded-full shadow-[0_0_10px_rgba(6,182,212,0.8)]"></div>
+<div class="absolute top-1/2 -left-24 transform -translate-x-1/2 -translate-y-1/2 w-2 h-2 bg-cyan-500 rounded-full shadow-[0_0_10px_rgba(6,182,212,0.8)]"></div>
+<div class="absolute -bottom-20 left-1/2 transform -translate-x-1/2 translate-y-1/2 w-2 h-2 bg-indigo-500 rounded-full shadow-[0_0_10px_rgba(99,102,241,0.8)]"></div>
+</div>
+<div class="absolute top-20 left-10 p-3 bg-slate-900/90 border border-white/10 rounded backdrop-blur-md shadow-xl animate-[pulse_4s_ease-in-out_infinite]">
+<div class="flex items-center gap-2 mb-2">
+<div class="w-1.5 h-1.5 rounded-full bg-primary animate-pulse"></div>
+<span class="text-[10px] font-mono text-slate-300">AI OPTIMIZATION</span>
+</div>
+<div class="space-y-1">
+<div class="h-1 w-24 bg-slate-800 rounded overflow-hidden">
+<div class="h-full bg-primary w-[85%]"></div>
+</div>
+<div class="flex justify-between text-[8px] font-mono text-slate-500">
+<span>Routing</span>
+<span>85%</span>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+<div class="py-10 border-y border-white/5 mb-16 relative overflow-hidden">
+<div class="flex flex-col md:flex-row items-center gap-8">
+<span class="text-xs font-mono text-slate-500 uppercase tracking-widest whitespace-nowrap">Integrated into workflows at:</span>
+<div class="flex flex-wrap justify-center md:justify-start gap-8 opacity-40 grayscale hover:grayscale-0 transition-all duration-500">
+<div class="flex items-center gap-2">
+<span class="material-symbols-outlined text-2xl">diamond</span>
+<span class="font-bold font-display text-lg">NVIDIA</span>
+</div>
+<div class="flex items-center gap-2">
+<span class="material-symbols-outlined text-2xl">pentagon</span>
+<span class="font-bold font-display text-lg">INTEL</span>
+</div>
+<div class="flex items-center gap-2">
+<span class="material-symbols-outlined text-2xl">hexagon</span>
+<span class="font-bold font-display text-lg">AMD</span>
+</div>
+<div class="flex items-center gap-2">
+<span class="material-symbols-outlined text-2xl">change_history</span>
+<span class="font-bold font-display text-lg">TEXAS INSTRUMENTS</span>
+</div>
+<div class="flex items-center gap-2">
+<span class="material-symbols-outlined text-2xl">circle</span>
+<span class="font-bold font-display text-lg">QUALCOMM</span>
+</div>
+</div>
+</div>
+</div>
+<div class="py-16">
+<div class="mb-12 flex items-end justify-between">
+<div>
+<h2 class="text-3xl font-display font-bold text-white mb-2">Core Architecture</h2>
+<p class="text-slate-400 font-light">Precision tools for the modern electrical engineer.</p>
+</div>
+<div class="hidden md:block text-right">
+<div class="font-mono text-xs text-primary">BUILD_VER: 2.4.0</div>
+<div class="font-mono text-xs text-slate-600">LAST_UPDATE: T-minus 2h</div>
+</div>
+</div>
+<div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+<div class="group relative p-1 bg-[#090b14] border border-white/5 hover:border-primary/30 transition-colors duration-300">
+<div class="absolute top-0 left-0 w-2 h-2 border-t border-l border-white/20 group-hover:border-primary transition-colors"></div>
+<div class="absolute top-0 right-0 w-2 h-2 border-t border-r border-white/20 group-hover:border-primary transition-colors"></div>
+<div class="absolute bottom-0 left-0 w-2 h-2 border-b border-l border-white/20 group-hover:border-primary transition-colors"></div>
+<div class="absolute bottom-0 right-0 w-2 h-2 border-b border-r border-white/20 group-hover:border-primary transition-colors"></div>
+<div class="p-6 h-full flex flex-col relative z-10 bg-gradient-to-b from-white/[0.02] to-transparent">
+<div class="w-10 h-10 mb-4 flex items-center justify-center bg-indigo-500/10 border border-indigo-500/20 text-indigo-400">
+<span class="material-symbols-outlined">developer_board</span>
+</div>
+<h3 class="text-lg font-bold text-white mb-2 font-display">Schematic Synthesis</h3>
+<p class="text-sm text-slate-400 leading-relaxed flex-grow">
+                                    Convert architectural block diagrams into fully connected KiCad/Altium schematics. Our LLM understands impedance matching and differential pairs.
+                                </p>
+<div class="mt-4 pt-4 border-t border-white/5 flex justify-between items-center">
+<span class="micro-copy text-indigo-400">AI_MODEL: V4</span>
+<span class="material-symbols-outlined text-slate-600 text-sm group-hover:text-indigo-400 transition-colors">arrow_forward</span>
+</div>
+</div>
+</div>
+<div class="group relative p-1 bg-[#090b14] border border-white/5 hover:border-primary/30 transition-colors duration-300">
+<div class="absolute top-0 left-0 w-2 h-2 border-t border-l border-white/20 group-hover:border-primary transition-colors"></div>
+<div class="absolute top-0 right-0 w-2 h-2 border-t border-r border-white/20 group-hover:border-primary transition-colors"></div>
+<div class="absolute bottom-0 left-0 w-2 h-2 border-b border-l border-white/20 group-hover:border-primary transition-colors"></div>
+<div class="absolute bottom-0 right-0 w-2 h-2 border-b border-r border-white/20 group-hover:border-primary transition-colors"></div>
+<div class="p-6 h-full flex flex-col relative z-10 bg-gradient-to-b from-white/[0.02] to-transparent">
+<div class="w-10 h-10 mb-4 flex items-center justify-center bg-cyan-500/10 border border-cyan-500/20 text-cyan-400">
+<span class="material-symbols-outlined">check_circle</span>
+</div>
+<h3 class="text-lg font-bold text-white mb-2 font-display">Real-time DFM</h3>
+<p class="text-sm text-slate-400 leading-relaxed flex-grow">
+                                    Continuous Design For Manufacturing checks against 50+ fab house constraints (JLCPCB, PCBWay, Sierra). Zero-error guarantee.
+                                </p>
+<div class="mt-4 pt-4 border-t border-white/5 flex justify-between items-center">
+<span class="micro-copy text-cyan-400">CHECK_RATE: 200/s</span>
+<span class="material-symbols-outlined text-slate-600 text-sm group-hover:text-cyan-400 transition-colors">arrow_forward</span>
+</div>
+</div>
+</div>
+<div class="group relative p-1 bg-[#090b14] border border-white/5 hover:border-primary/30 transition-colors duration-300">
+<div class="absolute top-0 left-0 w-2 h-2 border-t border-l border-white/20 group-hover:border-primary transition-colors"></div>
+<div class="absolute top-0 right-0 w-2 h-2 border-t border-r border-white/20 group-hover:border-primary transition-colors"></div>
+<div class="absolute bottom-0 left-0 w-2 h-2 border-b border-l border-white/20 group-hover:border-primary transition-colors"></div>
+<div class="absolute bottom-0 right-0 w-2 h-2 border-b border-r border-white/20 group-hover:border-primary transition-colors"></div>
+<div class="p-6 h-full flex flex-col relative z-10 bg-gradient-to-b from-white/[0.02] to-transparent">
+<div class="w-10 h-10 mb-4 flex items-center justify-center bg-purple-500/10 border border-purple-500/20 text-purple-400">
+<span class="material-symbols-outlined">grid_view</span>
+</div>
+<h3 class="text-lg font-bold text-white mb-2 font-display">Autorouting Kernel</h3>
+<p class="text-sm text-slate-400 leading-relaxed flex-grow">
+                                    Physics-aware placement and routing. Thermal simulation integration to prevent hotspots before you print the first board.
+                                </p>
+<div class="mt-4 pt-4 border-t border-white/5 flex justify-between items-center">
+<span class="micro-copy text-purple-400">PHYSICS_ENGINE: ON</span>
+<span class="material-symbols-outlined text-slate-600 text-sm group-hover:text-purple-400 transition-colors">arrow_forward</span>
+</div>
+</div>
+</div>
+</div>
+</div>
+<div class="relative py-24 px-6 md:px-12 mt-12 overflow-hidden rounded border border-white/10 bg-[#090b14]">
+<div class="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/carbon-fibre.png')] opacity-10"></div>
+<div class="absolute top-0 left-1/2 -translate-x-1/2 w-full max-w-lg h-1 bg-gradient-to-r from-transparent via-primary to-transparent opacity-50"></div>
+<div class="relative z-10 text-center max-w-3xl mx-auto">
+<h2 class="text-3xl md:text-4xl font-display font-bold text-white mb-6">
+                            Ready to compile your workflow?
+                        </h2>
+<p class="text-slate-400 mb-8 max-w-xl mx-auto">
+                            Join 10,000+ hardware engineers building the next generation of electronics with CircuitMind.
+                        </p>
+<div class="flex flex-col sm:flex-row items-center justify-center gap-6">
+<button class="mech-btn-primary px-8 py-4 text-sm font-bold uppercase tracking-wide rounded-sm w-full sm:w-auto shadow-[0_0_20px_rgba(14,165,233,0.3)]">
+                                Start Free Trial
+                            </button>
+<a class="text-sm font-mono text-slate-400 hover:text-white transition-colors flex items-center gap-2 group cursor-pointer" href="#">
+<span class="border-b border-transparent group-hover:border-white transition-all">Request Enterprise Demo</span>
+<span class="material-symbols-outlined text-[16px] group-hover:translate-x-1 transition-transform">arrow_forward</span>
+</a>
+</div>
+</div>
+</div>
+</div>
+</main>
+<footer class="border-t border-white/10 bg-[#020408] py-12 relative z-10">
+<div class="mx-auto max-w-7xl px-6 lg:px-8">
+<div class="flex flex-col md:flex-row justify-between items-center gap-8">
+<div class="flex flex-col items-start gap-4">
+<div class="flex items-center gap-2">
+<span class="material-symbols-outlined text-slate-500">hub</span>
+<span class="text-sm font-bold text-slate-300 tracking-wider uppercase">CircuitMind AI</span>
+</div>
+<p class="text-xs text-slate-600 font-mono">
+                            SYSTEM STATUS: <span class="text-green-500">OPERATIONAL</span><br/>
+                            © 2024 CircuitMind AI. All rights reserved.
+                        </p>
+</div>
+<div class="flex gap-8">
+<a class="text-slate-500 hover:text-primary transition-colors" href="#"><i class="fa-brands fa-github text-xl"></i></a>
+<a class="text-slate-500 hover:text-primary transition-colors" href="#"><i class="fa-brands fa-twitter text-xl"></i></a>
+<a class="text-slate-500 hover:text-primary transition-colors" href="#"><i class="fa-brands fa-discord text-xl"></i></a>
+</div>
+<div class="flex gap-6 text-xs font-mono text-slate-500">
+<a class="hover:text-white transition-colors" href="#">PRIVACY_POLICY</a>
+<a class="hover:text-white transition-colors" href="#">TERMS_OF_SERVICE</a>
+<a class="hover:text-white transition-colors" href="#">SECURITY</a>
+</div>
+</div>
+</div>
+</footer>
+</div>
+
+</body></html>

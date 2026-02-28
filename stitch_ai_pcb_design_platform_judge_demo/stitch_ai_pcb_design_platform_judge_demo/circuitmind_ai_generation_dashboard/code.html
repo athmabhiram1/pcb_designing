@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>CircuitMind AI Generation Dashboard</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        "primary": "#3c83f6",
+                        "primary-hover": "#2563eb",
+                        "secondary": "#22c55e",
+                        "background-light": "#f5f7f8",
+                        "background-dark": "#0f0f14",
+                        "surface-dark": "#18181b",
+                        "surface-light": "#ffffff",
+                        "border-dark": "#27272a",
+                    },
+                    fontFamily: {
+                        "display": ["Inter", "sans-serif"],
+                        "mono": ["monospace"]
+                    },
+                    borderRadius: {"DEFAULT": "0.25rem", "lg": "0.5rem", "xl": "0.75rem", "full": "9999px"},
+                },
+            },
+        }
+    </script>
+<style>
+        /* Custom scrollbar for that developer tool feel */
+        ::-webkit-scrollbar {
+            width: 8px;
+            height: 8px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #18181b;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #3f3f46;
+            border-radius: 4px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: #52525b;
+        }
+        .grid-pattern {
+            background-size: 20px 20px;
+            background-image: linear-gradient(to right, #27272a 1px, transparent 1px),
+                              linear-gradient(to bottom, #27272a 1px, transparent 1px);
+            mask-image: linear-gradient(to bottom, black 40%, transparent 100%);
+        }
+    </style>
+</head>
+<body class="bg-background-light dark:bg-background-dark font-display text-slate-900 dark:text-slate-100 overflow-hidden h-screen flex flex-col">
+<!-- Main Layout -->
+<div class="flex flex-1 overflow-hidden">
+<!-- Left Sidebar (Navigation) -->
+<aside class="w-64 flex flex-col bg-[#111418] border-r border-border-dark flex-shrink-0 z-20">
+<div class="p-4 flex items-center gap-3 border-b border-border-dark">
+<div class="bg-primary/20 flex items-center justify-center aspect-square rounded-full size-10">
+<span class="material-symbols-outlined text-primary">memory</span>
+</div>
+<h1 class="text-white text-base font-bold leading-normal tracking-wide">CircuitMind AI</h1>
+</div>
+<nav class="flex-1 overflow-y-auto py-4 px-2 space-y-1">
+<!-- Home -->
+<a class="flex items-center gap-3 px-3 py-2 rounded-lg text-slate-400 hover:bg-white/5 hover:text-white transition-colors group" href="#">
+<span class="material-symbols-outlined group-hover:text-primary transition-colors">home</span>
+<span class="text-sm font-medium">Home</span>
+</a>
+<!-- Generate (Active) -->
+<a class="flex items-center gap-3 px-3 py-2 rounded-lg bg-primary/10 text-white border-l-2 border-primary" href="#">
+<span class="material-symbols-outlined text-primary fill-1">computer</span>
+<span class="text-sm font-medium">Generate</span>
+</a>
+<!-- DFM Check -->
+<a class="flex items-center gap-3 px-3 py-2 rounded-lg text-slate-400 hover:bg-white/5 hover:text-white transition-colors group" href="#">
+<span class="material-symbols-outlined group-hover:text-primary transition-colors">check_circle</span>
+<span class="text-sm font-medium">DFM Check</span>
+</a>
+<!-- Placement -->
+<a class="flex items-center gap-3 px-3 py-2 rounded-lg text-slate-400 hover:bg-white/5 hover:text-white transition-colors group" href="#">
+<span class="material-symbols-outlined group-hover:text-primary transition-colors">grid_view</span>
+<span class="text-sm font-medium">Placement</span>
+</a>
+<!-- Templates -->
+<a class="flex items-center gap-3 px-3 py-2 rounded-lg text-slate-400 hover:bg-white/5 hover:text-white transition-colors group" href="#">
+<span class="material-symbols-outlined group-hover:text-primary transition-colors">folder_open</span>
+<span class="text-sm font-medium">Templates</span>
+</a>
+</nav>
+<div class="p-4 border-t border-border-dark">
+<a class="flex items-center gap-3 px-3 py-2 rounded-lg text-slate-400 hover:bg-white/5 hover:text-white transition-colors group" href="#">
+<span class="material-symbols-outlined group-hover:text-primary transition-colors">settings</span>
+<span class="text-sm font-medium">Settings</span>
+</a>
+</div>
+</aside>
+<!-- Main Workspace (Split View) -->
+<main class="flex-1 flex flex-row overflow-hidden relative">
+<!-- Left Panel: AI Prompt & Configuration -->
+<div class="w-[450px] flex flex-col border-r border-border-dark bg-surface-dark flex-shrink-0 z-10 shadow-xl">
+<div class="p-6 flex flex-col h-full">
+<h2 class="text-xl font-bold text-white mb-4 flex items-center gap-2">
+<span class="material-symbols-outlined text-primary">auto_awesome</span>
+                        AI Generator
+                    </h2>
+<!-- Prompt Area -->
+<div class="flex flex-col gap-2 mb-6 flex-1">
+<label class="text-sm font-medium text-slate-300">Circuit Description</label>
+<div class="relative flex-1 flex flex-col">
+<textarea class="w-full h-full bg-[#0f0f14] border border-border-dark rounded-xl p-4 text-sm text-slate-200 focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary placeholder:text-slate-600 resize-none font-mono leading-relaxed" placeholder="Describe your circuit functionality (e.g., 'A 555 timer astable multivibrator blinking an LED at 1Hz with a 9V supply')..."></textarea>
+<div class="absolute bottom-3 right-3 text-xs text-slate-500">PRO Mode</div>
+</div>
+</div>
+<!-- Chips -->
+<div class="flex flex-wrap gap-2 mb-6">
+<button class="px-3 py-1.5 rounded-full bg-[#27272a] hover:bg-[#3f3f46] text-xs text-slate-300 border border-border-dark transition-colors flex items-center gap-1">
+<span class="material-symbols-outlined text-[16px]">add</span> 555 Timer
+                        </button>
+<button class="px-3 py-1.5 rounded-full bg-[#27272a] hover:bg-[#3f3f46] text-xs text-slate-300 border border-border-dark transition-colors flex items-center gap-1">
+<span class="material-symbols-outlined text-[16px]">add</span> LED Driver
+                        </button>
+<button class="px-3 py-1.5 rounded-full bg-[#27272a] hover:bg-[#3f3f46] text-xs text-slate-300 border border-border-dark transition-colors flex items-center gap-1">
+<span class="material-symbols-outlined text-[16px]">add</span> Voltage Regulator
+                        </button>
+</div>
+<!-- Generate Button -->
+<button class="w-full bg-primary hover:bg-primary-hover text-white font-semibold py-3 px-4 rounded-xl flex items-center justify-center gap-2 shadow-[0_0_15px_rgba(59,130,246,0.5)] transition-all mb-6 group">
+<span class="material-symbols-outlined group-hover:animate-pulse">bolt</span>
+                        Generate Circuit
+                    </button>
+<!-- Console/Log -->
+<div class="bg-[#0f0f14] rounded-lg border border-border-dark p-3 font-mono text-xs overflow-hidden h-48 flex flex-col">
+<div class="flex justify-between items-center mb-2 border-b border-border-dark pb-1">
+<span class="text-slate-400">Generation Log</span>
+<span class="text-secondary flex items-center gap-1"><span class="block size-1.5 rounded-full bg-secondary animate-pulse"></span> Active</span>
+</div>
+<div class="flex-1 overflow-y-auto space-y-1 text-slate-400 custom-scrollbar">
+<p>&gt; Initializing session...</p>
+<p>&gt; Parsing natural language input...</p>
+<p>&gt; <span class="text-primary">Detected:</span> Astable Multivibrator configuration</p>
+<p>&gt; Calculating component values for 1Hz...</p>
+<p>&gt; <span class="text-secondary">Success:</span> R1=1k, R2=10k, C1=47uF</p>
+<p>&gt; Generating netlist...</p>
+<p class="animate-pulse">&gt; Rendering schematic preview...</p>
+</div>
+</div>
+</div>
+</div>
+<!-- Right Panel: Circuit Preview -->
+<div class="flex-1 flex flex-col bg-[#0f0f14] relative overflow-hidden">
+<!-- Grid Background -->
+<div class="absolute inset-0 grid-pattern opacity-20 pointer-events-none"></div>
+<!-- Header -->
+<div class="h-14 border-b border-border-dark flex items-center justify-between px-6 bg-surface-dark/50 backdrop-blur-sm z-10">
+<div class="flex items-center gap-4">
+<h3 class="text-white font-medium">Schematic Preview</h3>
+<span class="px-2 py-0.5 rounded text-[10px] font-bold bg-secondary/20 text-secondary border border-secondary/30">V1.0 GENERATED</span>
+</div>
+<div class="flex items-center gap-3">
+<button class="p-2 text-slate-400 hover:text-white hover:bg-white/10 rounded-lg transition-colors" title="Zoom In">
+<span class="material-symbols-outlined">add</span>
+</button>
+<button class="p-2 text-slate-400 hover:text-white hover:bg-white/10 rounded-lg transition-colors" title="Zoom Out">
+<span class="material-symbols-outlined">remove</span>
+</button>
+<button class="flex items-center gap-2 bg-secondary/10 hover:bg-secondary/20 text-secondary border border-secondary/30 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors shadow-[0_0_10px_rgba(34,197,94,0.1)]">
+<span class="material-symbols-outlined text-[18px]">download</span>
+                            Download .kicad_sch
+                        </button>
+</div>
+</div>
+<!-- Canvas Area (SVG Placeholder) -->
+<div class="flex-1 overflow-auto flex items-center justify-center p-8 relative">
+<!-- This represents the schematic canvas -->
+<div class="bg-[#1e1e24] border border-border-dark rounded shadow-2xl p-8 relative min-w-[600px] min-h-[400px]">
+<!-- Simple SVG representation of a circuit -->
+<svg height="400" viewbox="0 0 600 400" width="600" xmlns="http://www.w3.org/2000/svg">
+<!-- Styles -->
+<style>
+                                .wire { stroke: #22c55e; stroke-width: 2; fill: none; }
+                                .component-body { fill: #27272a; stroke: #a1a1aa; stroke-width: 2; }
+                                .component-pin { fill: #a1a1aa; }
+                                .label { fill: #fff; font-family: monospace; font-size: 12px; }
+                                .value { fill: #3b82f6; font-family: monospace; font-size: 10px; }
+                            </style>
+<!-- IC 555 -->
+<rect class="component-body" height="100" width="100" x="250" y="150"></rect>
+<text class="label" font-size="14" x="285" y="205">NE555</text>
+<!-- Pins Left -->
+<line class="wire" x1="230" x2="250" y1="170" y2="170"></line>
+<line class="wire" x1="230" x2="250" y1="230" y2="230"></line>
+<!-- Pins Right -->
+<line class="wire" x1="350" x2="370" y1="170" y2="170"></line>
+<line class="wire" x1="350" x2="370" y1="200" y2="200"></line>
+<!-- VCC Line -->
+<line class="wire" x1="100" x2="500" y1="50" y2="50"></line>
+<text class="label" x="80" y="55">VCC (9V)</text>
+<!-- GND Line -->
+<line class="wire" x1="100" x2="500" y1="350" y2="350"></line>
+<text class="label" x="80" y="355">GND</text>
+<!-- Resistor R1 -->
+<path class="wire" d="M230 170 V120 H200 V100 M200 70 V50"></path>
+<rect class="component-body" height="30" width="20" x="190" y="70"></rect>
+<text class="label" x="165" y="85">R1</text>
+<text class="value" x="165" y="100">1kΩ</text>
+<!-- LED -->
+<path class="wire" d="M370 200 H450 V250 M450 280 V350"></path>
+<circle class="component-body" cx="450" cy="265" fill="none" r="15"></circle>
+<text class="label" x="470" y="265">LED1</text>
+<text class="value" x="470" y="280">Green</text>
+<!-- Capacitor C1 -->
+<path class="wire" d="M230 230 V280 H200 V300 M200 320 V350"></path>
+<line stroke="#a1a1aa" stroke-width="2" x1="190" x2="210" y1="300" y2="300"></line> <!-- Plate 1 -->
+<line stroke="#a1a1aa" stroke-width="2" x1="190" x2="210" y1="320" y2="320"></line> <!-- Plate 2 -->
+<text class="label" x="165" y="315">C1</text>
+<text class="value" x="165" y="330">47µF</text>
+</svg>
+</div>
+</div>
+<!-- Component Table (Bottom Panel of Right Side) -->
+<div class="h-64 border-t border-border-dark bg-surface-dark z-10 flex flex-col">
+<div class="px-6 py-3 border-b border-border-dark flex justify-between items-center bg-[#111418]">
+<h4 class="text-sm font-semibold text-slate-300">Bill of Materials (BOM)</h4>
+<div class="flex gap-2">
+<button class="text-xs px-2 py-1 bg-white/5 hover:bg-white/10 rounded text-slate-400">Export CSV</button>
+</div>
+</div>
+<div class="flex-1 overflow-auto">
+<table class="w-full text-left text-sm text-slate-400">
+<thead class="text-xs uppercase bg-[#18181b] text-slate-500 sticky top-0">
+<tr>
+<th class="px-6 py-3 font-medium">Reference</th>
+<th class="px-6 py-3 font-medium">Part</th>
+<th class="px-6 py-3 font-medium">Value</th>
+<th class="px-6 py-3 font-medium">Footprint</th>
+<th class="px-6 py-3 font-medium">Description</th>
+</tr>
+</thead>
+<tbody class="divide-y divide-border-dark">
+<tr class="hover:bg-white/5">
+<td class="px-6 py-3 font-mono text-white">U1</td>
+<td class="px-6 py-3 text-primary">NE555P</td>
+<td class="px-6 py-3">-</td>
+<td class="px-6 py-3 font-mono text-xs">DIP-8</td>
+<td class="px-6 py-3">Precision Timer</td>
+</tr>
+<tr class="hover:bg-white/5">
+<td class="px-6 py-3 font-mono text-white">R1</td>
+<td class="px-6 py-3">R_Axial_DIN0207</td>
+<td class="px-6 py-3 text-secondary">1kΩ</td>
+<td class="px-6 py-3 font-mono text-xs">R_0805_2012Metric</td>
+<td class="px-6 py-3">Resistor</td>
+</tr>
+<tr class="hover:bg-white/5">
+<td class="px-6 py-3 font-mono text-white">R2</td>
+<td class="px-6 py-3">R_Axial_DIN0207</td>
+<td class="px-6 py-3 text-secondary">10kΩ</td>
+<td class="px-6 py-3 font-mono text-xs">R_0805_2012Metric</td>
+<td class="px-6 py-3">Resistor</td>
+</tr>
+<tr class="hover:bg-white/5">
+<td class="px-6 py-3 font-mono text-white">C1</td>
+<td class="px-6 py-3">C_Radial_D5.0mm</td>
+<td class="px-6 py-3 text-secondary">47µF</td>
+<td class="px-6 py-3 font-mono text-xs">C_0805_2012Metric</td>
+<td class="px-6 py-3">Polarized Capacitor</td>
+</tr>
+<tr class="hover:bg-white/5">
+<td class="px-6 py-3 font-mono text-white">LED1</td>
+<td class="px-6 py-3">LED_THT</td>
+<td class="px-6 py-3 text-secondary">Green</td>
+<td class="px-6 py-3 font-mono text-xs">LED_D3.0mm</td>
+<td class="px-6 py-3">Light Emitting Diode</td>
+</tr>
+</tbody>
+</table>
+</div>
+</div>
+</div>
+</main>
+</div>
+<!-- Status Bar -->
+<footer class="h-8 bg-primary text-white flex items-center justify-between px-4 text-xs font-mono border-t border-blue-600 z-30 select-none">
+<div class="flex items-center gap-6">
+<div class="flex items-center gap-2">
+<span class="material-symbols-outlined text-[14px]">cloud_done</span>
+<span>Backend: Connected</span>
+</div>
+<div class="flex items-center gap-2">
+<span class="material-symbols-outlined text-[14px]">psychology</span>
+<span>LLM: Ollama (deepseek-coder-7b)</span>
+</div>
+</div>
+<div class="flex items-center gap-4">
+<div class="flex items-center gap-2">
+<span class="material-symbols-outlined text-[14px]">timer</span>
+<span>Generation time: 2.3s</span>
+</div>
+<span>v2.4.0-beta</span>
+</div>
+</footer>
+</body></html>

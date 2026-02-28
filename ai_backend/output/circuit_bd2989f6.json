@@ -1,0 +1,291 @@
+{
+  "components": [
+    {
+      "ref": "U1",
+      "value": "NE555",
+      "footprint": "Package_DIP:DIP-8_W7.62mm",
+      "x": 10.0,
+      "y": 10.0,
+      "rotation": 0.0,
+      "layer": "top",
+      "height_mm": null,
+      "power_dissipation_mw": null,
+      "is_polarized": false
+    },
+    {
+      "ref": "R1",
+      "value": "10k",
+      "footprint": "Resistor_SMD:R_0805_2012Metric",
+      "x": 20.0,
+      "y": 10.0,
+      "rotation": 0.0,
+      "layer": "top",
+      "height_mm": null,
+      "power_dissipation_mw": null,
+      "is_polarized": false
+    },
+    {
+      "ref": "R2",
+      "value": "47k",
+      "footprint": "Resistor_SMD:R_0805_2012Metric",
+      "x": 30.0,
+      "y": 10.0,
+      "rotation": 0.0,
+      "layer": "top",
+      "height_mm": null,
+      "power_dissipation_mw": null,
+      "is_polarized": false
+    },
+    {
+      "ref": "R3",
+      "value": "330",
+      "footprint": "Resistor_SMD:R_0805_2012Metric",
+      "x": 40.0,
+      "y": 10.0,
+      "rotation": 0.0,
+      "layer": "top",
+      "height_mm": null,
+      "power_dissipation_mw": null,
+      "is_polarized": false
+    },
+    {
+      "ref": "C1",
+      "value": "10uF",
+      "footprint": "Capacitor_SMD:C_0805_2012Metric",
+      "x": 50.0,
+      "y": 10.0,
+      "rotation": 0.0,
+      "layer": "top",
+      "height_mm": null,
+      "power_dissipation_mw": null,
+      "is_polarized": false
+    },
+    {
+      "ref": "C2",
+      "value": "10nF",
+      "footprint": "Capacitor_SMD:C_0805_2012Metric",
+      "x": 10.0,
+      "y": 20.0,
+      "rotation": 0.0,
+      "layer": "top",
+      "height_mm": null,
+      "power_dissipation_mw": null,
+      "is_polarized": false
+    },
+    {
+      "ref": "C3",
+      "value": "100nF",
+      "footprint": "Capacitor_SMD:C_0805_2012Metric",
+      "x": 20.0,
+      "y": 20.0,
+      "rotation": 0.0,
+      "layer": "top",
+      "height_mm": null,
+      "power_dissipation_mw": null,
+      "is_polarized": false
+    },
+    {
+      "ref": "D1",
+      "value": "Red",
+      "footprint": "LED_SMD:LED_0805_2012Metric",
+      "x": 30.0,
+      "y": 20.0,
+      "rotation": 0.0,
+      "layer": "top",
+      "height_mm": null,
+      "power_dissipation_mw": null,
+      "is_polarized": false
+    }
+  ],
+  "connections": [
+    {
+      "net": "VCC",
+      "pins": [
+        {
+          "ref": "U1",
+          "pin": "8"
+        },
+        {
+          "ref": "U1",
+          "pin": "4"
+        },
+        {
+          "ref": "R1",
+          "pin": "1"
+        },
+        {
+          "ref": "C3",
+          "pin": "1"
+        }
+      ],
+      "properties": {
+        "net_type": "signal",
+        "voltage": null,
+        "current_max": null,
+        "frequency": null,
+        "impedance_ohms": null,
+        "length_mm": null,
+        "is_critical": false
+      }
+    },
+    {
+      "net": "DIS_THR",
+      "pins": [
+        {
+          "ref": "U1",
+          "pin": "7"
+        },
+        {
+          "ref": "R1",
+          "pin": "2"
+        },
+        {
+          "ref": "R2",
+          "pin": "1"
+        }
+      ],
+      "properties": {
+        "net_type": "signal",
+        "voltage": null,
+        "current_max": null,
+        "frequency": null,
+        "impedance_ohms": null,
+        "length_mm": null,
+        "is_critical": false
+      }
+    },
+    {
+      "net": "TRIG_THR",
+      "pins": [
+        {
+          "ref": "U1",
+          "pin": "2"
+        },
+        {
+          "ref": "U1",
+          "pin": "6"
+        },
+        {
+          "ref": "R2",
+          "pin": "2"
+        },
+        {
+          "ref": "C1",
+          "pin": "1"
+        }
+      ],
+      "properties": {
+        "net_type": "signal",
+        "voltage": null,
+        "current_max": null,
+        "frequency": null,
+        "impedance_ohms": null,
+        "length_mm": null,
+        "is_critical": false
+      }
+    },
+    {
+      "net": "CTRL",
+      "pins": [
+        {
+          "ref": "U1",
+          "pin": "5"
+        },
+        {
+          "ref": "C2",
+          "pin": "1"
+        }
+      ],
+      "properties": {
+        "net_type": "signal",
+        "voltage": null,
+        "current_max": null,
+        "frequency": null,
+        "impedance_ohms": null,
+        "length_mm": null,
+        "is_critical": false
+      }
+    },
+    {
+      "net": "OUT",
+      "pins": [
+        {
+          "ref": "U1",
+          "pin": "3"
+        },
+        {
+          "ref": "R3",
+          "pin": "1"
+        }
+      ],
+      "properties": {
+        "net_type": "signal",
+        "voltage": null,
+        "current_max": null,
+        "frequency": null,
+        "impedance_ohms": null,
+        "length_mm": null,
+        "is_critical": false
+      }
+    },
+    {
+      "net": "LED_K",
+      "pins": [
+        {
+          "ref": "R3",
+          "pin": "2"
+        },
+        {
+          "ref": "D1",
+          "pin": "1"
+        }
+      ],
+      "properties": {
+        "net_type": "signal",
+        "voltage": null,
+        "current_max": null,
+        "frequency": null,
+        "impedance_ohms": null,
+        "length_mm": null,
+        "is_critical": false
+      }
+    },
+    {
+      "net": "GND",
+      "pins": [
+        {
+          "ref": "U1",
+          "pin": "1"
+        },
+        {
+          "ref": "C1",
+          "pin": "2"
+        },
+        {
+          "ref": "C2",
+          "pin": "2"
+        },
+        {
+          "ref": "C3",
+          "pin": "2"
+        },
+        {
+          "ref": "D1",
+          "pin": "2"
+        }
+      ],
+      "properties": {
+        "net_type": "signal",
+        "voltage": null,
+        "current_max": null,
+        "frequency": null,
+        "impedance_ohms": null,
+        "length_mm": null,
+        "is_critical": false
+      }
+    }
+  ],
+  "board_width": 100.0,
+  "board_height": 80.0,
+  "design_rules": {}
+}

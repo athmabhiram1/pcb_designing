@@ -1,0 +1,403 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>CircuitMind AI DFM Analysis Dashboard</title>
+<!-- Fonts -->
+<link href="https://fonts.googleapis.com" rel="preconnect"/>
+<link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"/>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@24,400,0,0" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<!-- Tailwind CSS -->
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<!-- Tailwind Config -->
+<script>
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        primary: "#3c83f6",
+                        "primary-dark": "#2563eb",
+                        "background-light": "#f5f7f8",
+                        "background-dark": "#101722",
+                        "surface-dark": "#1a2332",
+                        "surface-darker": "#111825",
+                        "border-dark": "#2d3748",
+                        "text-secondary": "#9ca7ba",
+                        "success": "#22c55e",
+                        "warning": "#eab308",
+                        "error": "#ef4444",
+                    },
+                    fontFamily: {
+                        display: ["Space Grotesk", "sans-serif"],
+                    },
+                    borderRadius: {
+                        DEFAULT: "0.25rem",
+                        lg: "0.5rem",
+                        xl: "0.75rem",
+                        full: "9999px",
+                    },
+                },
+            },
+        }
+    </script>
+<style>
+        body {
+            font-family: 'Space Grotesk', sans-serif;
+        }
+        /* Custom scrollbar for webkit browsers */
+        ::-webkit-scrollbar {
+            width: 8px;
+            height: 8px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #101722; 
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #2d3748; 
+            border-radius: 4px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: #4a5568; 
+        }
+    </style>
+</head>
+<body class="bg-background-light dark:bg-background-dark text-slate-900 dark:text-slate-100 min-h-screen flex overflow-hidden font-display antialiased">
+<!-- Sidebar -->
+<aside class="w-64 bg-surface-darker border-r border-border-dark flex flex-col h-screen shrink-0 sticky top-0">
+<!-- Logo -->
+<div class="p-6">
+<h1 class="text-white text-xl font-bold tracking-tight flex items-center gap-2">
+<span class="material-symbols-outlined text-primary">hub</span>
+                CircuitMind
+            </h1>
+<p class="text-text-secondary text-xs mt-1 font-medium pl-8">AI Platform</p>
+</div>
+<!-- Navigation -->
+<nav class="flex-1 px-4 flex flex-col gap-1 overflow-y-auto">
+<a class="flex items-center gap-3 px-3 py-2.5 rounded-lg text-text-secondary hover:bg-surface-dark hover:text-white transition-colors group" href="#">
+<span class="material-symbols-outlined group-hover:text-primary">home</span>
+<span class="text-sm font-medium">Home</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-2.5 rounded-lg text-text-secondary hover:bg-surface-dark hover:text-white transition-colors group" href="#">
+<span class="material-symbols-outlined group-hover:text-primary">memory</span>
+<span class="text-sm font-medium">Generate</span>
+</a>
+<!-- Active Item -->
+<a class="flex items-center gap-3 px-3 py-2.5 rounded-lg bg-primary/20 text-primary border border-primary/30" href="#">
+<span class="material-symbols-outlined fill-1">fact_check</span>
+<span class="text-sm font-medium">DFM Check</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-2.5 rounded-lg text-text-secondary hover:bg-surface-dark hover:text-white transition-colors group" href="#">
+<span class="material-symbols-outlined group-hover:text-primary">grid_view</span>
+<span class="text-sm font-medium">Placement</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-2.5 rounded-lg text-text-secondary hover:bg-surface-dark hover:text-white transition-colors group" href="#">
+<span class="material-symbols-outlined group-hover:text-primary">description</span>
+<span class="text-sm font-medium">Templates</span>
+</a>
+</nav>
+<!-- Bottom Actions -->
+<div class="p-4 mt-auto border-t border-border-dark">
+<a class="flex items-center gap-3 px-3 py-2.5 rounded-lg text-text-secondary hover:bg-surface-dark hover:text-white transition-colors group" href="#">
+<span class="material-symbols-outlined group-hover:text-primary">settings</span>
+<span class="text-sm font-medium">Settings</span>
+</a>
+<div class="mt-4 flex items-center gap-3 px-3">
+<div class="w-8 h-8 rounded-full bg-gradient-to-tr from-primary to-purple-500 flex items-center justify-center text-xs font-bold text-white">
+                    JD
+                </div>
+<div class="flex flex-col">
+<span class="text-xs font-medium text-white">John Doe</span>
+<span class="text-[10px] text-text-secondary">Pro Plan</span>
+</div>
+</div>
+</div>
+</aside>
+<!-- Main Content -->
+<main class="flex-1 h-screen overflow-y-auto bg-background-light dark:bg-background-dark p-8">
+<div class="max-w-7xl mx-auto flex flex-col gap-8">
+<!-- Header -->
+<header class="flex justify-between items-end">
+<div>
+<h2 class="text-3xl font-bold text-slate-900 dark:text-white tracking-tight">DFM Analysis</h2>
+<p class="text-text-secondary mt-1">Real-time Design for Manufacturing validation &amp; Cost Estimation</p>
+</div>
+<div class="flex gap-3">
+<button class="px-4 py-2 bg-surface-dark border border-border-dark text-white rounded-lg text-sm font-medium hover:bg-surface-darker transition flex items-center gap-2">
+<span class="material-symbols-outlined text-sm">download</span>
+                        Export Report
+                    </button>
+<button class="px-4 py-2 bg-primary hover:bg-primary-dark text-white rounded-lg text-sm font-medium transition shadow-lg shadow-primary/20 flex items-center gap-2">
+<span class="material-symbols-outlined text-sm">refresh</span>
+                        Re-Run DFM
+                    </button>
+</div>
+</header>
+<!-- Manufacturer Profiles -->
+<section>
+<h3 class="text-lg font-semibold text-white mb-4 flex items-center gap-2">
+<span class="material-symbols-outlined text-primary">factory</span>
+                    Manufacturer Profiles
+                </h3>
+<div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+<!-- JLCPCB - Active -->
+<div class="bg-surface-dark rounded-xl p-5 border-2 border-primary shadow-lg shadow-primary/10 relative overflow-hidden group">
+<div class="absolute top-0 right-0 p-2 opacity-100 transition-opacity">
+<span class="bg-primary text-white text-[10px] font-bold px-2 py-1 rounded-full uppercase tracking-wider">Active</span>
+</div>
+<div class="flex items-center gap-4 mb-4">
+<div class="w-12 h-12 rounded-lg bg-white flex items-center justify-center overflow-hidden p-1">
+<!-- Abstract Logo representation -->
+<div class="w-full h-full bg-blue-600 rounded flex items-center justify-center text-white font-bold text-xs" data-alt="JLCPCB Logo Placeholder">JLC</div>
+</div>
+<div>
+<h4 class="text-white font-bold text-lg leading-tight">JLCPCB</h4>
+<span class="text-xs text-text-secondary">Shenzhen, China</span>
+</div>
+</div>
+<div class="space-y-2 text-sm">
+<div class="flex justify-between border-b border-border-dark pb-1">
+<span class="text-text-secondary">Min Trace</span>
+<span class="text-white font-mono">0.127mm</span>
+</div>
+<div class="flex justify-between border-b border-border-dark pb-1">
+<span class="text-text-secondary">Min Via</span>
+<span class="text-white font-mono">0.3mm</span>
+</div>
+<div class="flex justify-between">
+<span class="text-text-secondary">Layers</span>
+<span class="text-white font-mono">1-8</span>
+</div>
+</div>
+</div>
+<!-- PCBWay -->
+<div class="bg-surface-dark rounded-xl p-5 border border-border-dark hover:border-text-secondary transition-colors cursor-pointer group">
+<div class="flex items-center gap-4 mb-4">
+<div class="w-12 h-12 rounded-lg bg-white flex items-center justify-center overflow-hidden p-1 grayscale group-hover:grayscale-0 transition-all">
+<div class="w-full h-full bg-green-600 rounded flex items-center justify-center text-white font-bold text-xs" data-alt="PCBWay Logo Placeholder">PCB</div>
+</div>
+<div>
+<h4 class="text-white font-bold text-lg leading-tight">PCBWay</h4>
+<span class="text-xs text-text-secondary">Hangzhou, China</span>
+</div>
+</div>
+<div class="space-y-2 text-sm opacity-70 group-hover:opacity-100 transition-opacity">
+<div class="flex justify-between border-b border-border-dark pb-1">
+<span class="text-text-secondary">Min Trace</span>
+<span class="text-white font-mono">0.15mm</span>
+</div>
+<div class="flex justify-between border-b border-border-dark pb-1">
+<span class="text-text-secondary">Min Via</span>
+<span class="text-white font-mono">0.25mm</span>
+</div>
+<div class="flex justify-between">
+<span class="text-text-secondary">Layers</span>
+<span class="text-white font-mono">1-12</span>
+</div>
+</div>
+</div>
+<!-- OSH Park -->
+<div class="bg-surface-dark rounded-xl p-5 border border-border-dark hover:border-text-secondary transition-colors cursor-pointer group">
+<div class="flex items-center gap-4 mb-4">
+<div class="w-12 h-12 rounded-lg bg-white flex items-center justify-center overflow-hidden p-1 grayscale group-hover:grayscale-0 transition-all">
+<div class="w-full h-full bg-purple-700 rounded flex items-center justify-center text-white font-bold text-xs" data-alt="OSH Park Logo Placeholder">OSH</div>
+</div>
+<div>
+<h4 class="text-white font-bold text-lg leading-tight">OSH Park</h4>
+<span class="text-xs text-text-secondary">Oregon, USA</span>
+</div>
+</div>
+<div class="space-y-2 text-sm opacity-70 group-hover:opacity-100 transition-opacity">
+<div class="flex justify-between border-b border-border-dark pb-1">
+<span class="text-text-secondary">Min Trace</span>
+<span class="text-white font-mono">0.152mm</span>
+</div>
+<div class="flex justify-between border-b border-border-dark pb-1">
+<span class="text-text-secondary">Min Via</span>
+<span class="text-white font-mono">0.33mm</span>
+</div>
+<div class="flex justify-between">
+<span class="text-text-secondary">Layers</span>
+<span class="text-white font-mono">2, 4</span>
+</div>
+</div>
+</div>
+</div>
+</section>
+<!-- Violation Report -->
+<section class="flex flex-col lg:flex-row gap-6">
+<!-- Visual Map (Placeholder) -->
+<div class="w-full lg:w-1/3 bg-surface-dark rounded-xl border border-border-dark p-4 flex flex-col">
+<h3 class="text-sm font-semibold text-text-secondary mb-3 uppercase tracking-wider">Board Visualizer</h3>
+<div class="flex-1 bg-surface-darker rounded-lg relative overflow-hidden flex items-center justify-center border border-border-dark group">
+<!-- Abstract PCB visual -->
+<div class="absolute inset-0 opacity-20 bg-[radial-gradient(#3c83f6_1px,transparent_1px)] [background-size:16px_16px]"></div>
+<div class="w-48 h-64 border-2 border-emerald-500/50 rounded bg-emerald-500/10 relative" data-alt="Abstract Green PCB layout visualization">
+<!-- Error Highlight -->
+<div class="absolute top-10 left-8 w-4 h-4 border border-error bg-error/20 rounded-full animate-pulse z-10"></div>
+<!-- Warning Highlight -->
+<div class="absolute bottom-20 right-10 w-16 h-1 border border-warning bg-warning/20 rotate-45 z-10"></div>
+<!-- Fake Components -->
+<div class="absolute top-4 left-4 w-8 h-8 bg-slate-700 rounded-sm"></div>
+<div class="absolute bottom-12 right-12 w-12 h-12 bg-slate-700 rounded-sm"></div>
+<div class="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-20 h-20 bg-slate-800 rounded-sm border border-slate-600 flex items-center justify-center">
+<span class="text-[10px] text-slate-500">MCU</span>
+</div>
+</div>
+<div class="absolute bottom-4 right-4 flex gap-2">
+<button class="w-8 h-8 bg-background-dark rounded flex items-center justify-center hover:bg-primary hover:text-white transition"><span class="material-symbols-outlined text-sm">add</span></button>
+<button class="w-8 h-8 bg-background-dark rounded flex items-center justify-center hover:bg-primary hover:text-white transition"><span class="material-symbols-outlined text-sm">remove</span></button>
+</div>
+</div>
+</div>
+<!-- List -->
+<div class="w-full lg:w-2/3 bg-surface-dark rounded-xl border border-border-dark flex flex-col overflow-hidden">
+<div class="p-4 border-b border-border-dark flex justify-between items-center bg-surface-darker">
+<h3 class="font-semibold text-white flex items-center gap-2">
+<span class="material-symbols-outlined text-primary">bug_report</span>
+                            Design Rule Violations
+                        </h3>
+<div class="flex items-center gap-2 text-xs font-medium">
+<span class="flex items-center gap-1 text-text-secondary"><span class="w-2 h-2 rounded-full bg-error"></span>1 Error</span>
+<span class="w-px h-3 bg-border-dark mx-1"></span>
+<span class="flex items-center gap-1 text-text-secondary"><span class="w-2 h-2 rounded-full bg-warning"></span>1 Warning</span>
+</div>
+</div>
+<div class="flex-1 overflow-y-auto p-0">
+<!-- Error Item -->
+<div class="p-4 border-b border-border-dark hover:bg-surface-darker transition flex items-start gap-4 group">
+<div class="mt-1 shrink-0">
+<span class="material-symbols-outlined text-error">error</span>
+</div>
+<div class="flex-1">
+<div class="flex justify-between items-start mb-1">
+<h4 class="text-white font-medium text-sm">Component Overlap</h4>
+<span class="px-2 py-0.5 rounded text-[10px] font-bold bg-error/10 text-error border border-error/20 uppercase">Critical</span>
+</div>
+<p class="text-text-secondary text-sm mb-2">Component U1 overlaps with R3 on Top Layer. Clearance is -0.5mm.</p>
+<div class="flex gap-2">
+<button class="text-primary text-xs hover:underline flex items-center gap-1">
+                                        Locate on Board <span class="material-symbols-outlined text-[10px]">arrow_outward</span>
+</button>
+</div>
+</div>
+</div>
+<!-- Warning Item -->
+<div class="p-4 border-b border-border-dark hover:bg-surface-darker transition flex items-start gap-4 group">
+<div class="mt-1 shrink-0">
+<span class="material-symbols-outlined text-warning">warning</span>
+</div>
+<div class="flex-1">
+<div class="flex justify-between items-start mb-1">
+<h4 class="text-white font-medium text-sm">Trace Width Violation</h4>
+<span class="px-2 py-0.5 rounded text-[10px] font-bold bg-warning/10 text-warning border border-warning/20 uppercase">Warning</span>
+</div>
+<p class="text-text-secondary text-sm mb-2">Trace width on net VCC is 0.1mm (min required: 0.127mm for JLCPCB).</p>
+<div class="flex gap-2">
+<button class="text-primary text-xs hover:underline flex items-center gap-1">
+                                        Auto-fix Trace <span class="material-symbols-outlined text-[10px]">auto_fix_high</span>
+</button>
+</div>
+</div>
+</div>
+<!-- Pass Item -->
+<div class="p-4 border-b border-border-dark hover:bg-surface-darker transition flex items-start gap-4 opacity-70 hover:opacity-100">
+<div class="mt-1 shrink-0">
+<span class="material-symbols-outlined text-success">check_circle</span>
+</div>
+<div class="flex-1">
+<div class="flex justify-between items-start mb-1">
+<h4 class="text-white font-medium text-sm">Board Dimensions</h4>
+<span class="px-2 py-0.5 rounded text-[10px] font-bold bg-success/10 text-success border border-success/20 uppercase">Passed</span>
+</div>
+<p class="text-text-secondary text-sm">Board size 45mm x 30mm is within standard panel limits.</p>
+</div>
+</div>
+<!-- Pass Item -->
+<div class="p-4 hover:bg-surface-darker transition flex items-start gap-4 opacity-70 hover:opacity-100">
+<div class="mt-1 shrink-0">
+<span class="material-symbols-outlined text-success">check_circle</span>
+</div>
+<div class="flex-1">
+<div class="flex justify-between items-start mb-1">
+<h4 class="text-white font-medium text-sm">Drill Holes</h4>
+<span class="px-2 py-0.5 rounded text-[10px] font-bold bg-success/10 text-success border border-success/20 uppercase">Passed</span>
+</div>
+<p class="text-text-secondary text-sm">All 42 drill holes meet minimum diameter specifications.</p>
+</div>
+</div>
+</div>
+<!-- Summary Footer -->
+<div class="bg-surface-darker p-3 border-t border-border-dark flex justify-between items-center">
+<span class="text-xs text-text-secondary font-mono">Scan time: 1.2s</span>
+<div class="flex items-center gap-2">
+<span class="text-sm text-white font-medium">2 violations found</span>
+<span class="text-xs text-text-secondary">| 1 error | 1 warning | 2 passed</span>
+</div>
+</div>
+</div>
+</section>
+<!-- Cost Estimation -->
+<section class="bg-surface-dark rounded-xl border border-border-dark p-6">
+<div class="flex justify-between items-center mb-6">
+<h3 class="text-lg font-semibold text-white flex items-center gap-2">
+<span class="material-symbols-outlined text-primary">attach_money</span>
+                        Cost Estimation
+                    </h3>
+<div class="flex bg-surface-darker rounded-lg p-1 border border-border-dark">
+<button class="px-3 py-1 text-xs font-medium text-white bg-primary rounded shadow">Standard</button>
+<button class="px-3 py-1 text-xs font-medium text-text-secondary hover:text-white transition">Expedited</button>
+</div>
+</div>
+<div class="overflow-x-auto">
+<table class="w-full text-sm text-left">
+<thead class="text-xs text-text-secondary uppercase bg-surface-darker border-b border-border-dark">
+<tr>
+<th class="px-6 py-4 rounded-tl-lg" scope="col">Quantity</th>
+<th class="px-6 py-4 bg-primary/10 border-t-2 border-primary text-primary relative" scope="col">
+                                    JLCPCB
+                                    <span class="absolute -top-3 left-1/2 -translate-x-1/2 bg-success text-white text-[9px] px-2 py-0.5 rounded-full font-bold shadow-sm border border-surface-dark">BEST VALUE</span>
+</th>
+<th class="px-6 py-4" scope="col">PCBWay</th>
+<th class="px-6 py-4 rounded-tr-lg" scope="col">OSH Park</th>
+</tr>
+</thead>
+<tbody class="divide-y divide-border-dark">
+<tr class="hover:bg-surface-darker transition">
+<td class="px-6 py-4 font-medium text-white">5 pieces</td>
+<td class="px-6 py-4 bg-primary/5 text-white font-bold font-mono">$2.00</td>
+<td class="px-6 py-4 text-text-secondary font-mono">$5.00</td>
+<td class="px-6 py-4 text-text-secondary font-mono">$25.00</td>
+</tr>
+<tr class="hover:bg-surface-darker transition">
+<td class="px-6 py-4 font-medium text-white">10 pieces</td>
+<td class="px-6 py-4 bg-primary/5 text-white font-bold font-mono">$4.00</td>
+<td class="px-6 py-4 text-text-secondary font-mono">$8.00</td>
+<td class="px-6 py-4 text-text-secondary font-mono">$50.00</td>
+</tr>
+<tr class="hover:bg-surface-darker transition">
+<td class="px-6 py-4 font-medium text-white">100 pieces</td>
+<td class="px-6 py-4 bg-primary/5 text-white font-bold font-mono">$28.50</td>
+<td class="px-6 py-4 text-text-secondary font-mono">$42.00</td>
+<td class="px-6 py-4 text-text-secondary font-mono">$380.00</td>
+</tr>
+<tr class="bg-surface-darker/50">
+<td class="px-6 py-3 font-medium text-text-secondary text-xs">Lead Time</td>
+<td class="px-6 py-3 bg-primary/5 text-primary text-xs font-medium">2-3 Days</td>
+<td class="px-6 py-3 text-text-secondary text-xs">3-4 Days</td>
+<td class="px-6 py-3 text-text-secondary text-xs">9-12 Days</td>
+</tr>
+</tbody>
+</table>
+</div>
+</section>
+</div>
+<footer class="mt-12 text-center text-text-secondary text-sm pb-4">
+            © 2023 CircuitMind AI. All rights reserved.
+        </footer>
+</main>
+</body></html>

@@ -1,0 +1,66 @@
+{
+  "description": "Op-amp unity gain voltage buffer using LM358 — high input impedance, buffered output",
+  "components": [
+    {
+      "ref": "U1",
+      "lib": "Amplifier_Operational",
+      "part": "LM358",
+      "value": "LM358",
+      "footprint": "Package_SO:SOIC-8_3.9x4.9mm_P1.27mm",
+      "description": "LM358 dual op-amp, single supply 3V-32V, one op-amp used as unity-gain buffer",
+      "pins": [
+        {"number": "1", "name": "OUT1"},
+        {"number": "2", "name": "IN1-"},
+        {"number": "3", "name": "IN1+"},
+        {"number": "4", "name": "GND"},
+        {"number": "5", "name": "IN2+"},
+        {"number": "6", "name": "IN2-"},
+        {"number": "7", "name": "OUT2"},
+        {"number": "8", "name": "VCC"}
+      ]
+    },
+    {
+      "ref": "C1",
+      "lib": "Device",
+      "part": "C",
+      "value": "100nF",
+      "footprint": "Capacitor_SMD:C_0402_1005Metric",
+      "description": "Power supply HF decoupling",
+      "pins": [{"number": "1", "name": "+"}, {"number": "2", "name": "-"}]
+    },
+    {
+      "ref": "C2",
+      "lib": "Device",
+      "part": "C",
+      "value": "10uF",
+      "footprint": "Capacitor_SMD:C_0805_2012Metric",
+      "description": "Power supply bulk decoupling",
+      "pins": [{"number": "1", "name": "+"}, {"number": "2", "name": "-"}]
+    },
+    {
+      "ref": "R1",
+      "lib": "Device",
+      "part": "R",
+      "value": "10k",
+      "footprint": "Resistor_SMD:R_0805_2012Metric",
+      "description": "Input bias current compensation resistor",
+      "pins": [{"number": "1", "name": "1"}, {"number": "2", "name": "2"}]
+    }
+  ],
+  "connections": [
+    {"net": "VCC",      "pins": ["U1.8", "C1.1", "C2.1"]},
+    {"net": "GND",      "pins": ["U1.4", "C1.2", "C2.2", "R1.2"]},
+    {"net": "VIN",      "pins": ["R1.1", "U1.3"]},
+    {"net": "VOUT",     "pins": ["U1.1", "U1.2"]}
+  ],
+  "board_width": 50.0,
+  "board_height": 40.0,
+  "metadata": {
+    "author": "AI PCB Assistant",
+    "version": "1.0",
+    "category": "analog",
+    "gain": "1 (unity)",
+    "input_impedance": ">1MOhm",
+    "supply_voltage": "5-15V"
+  }
+}
