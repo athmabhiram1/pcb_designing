@@ -566,7 +566,8 @@ def _validate_circuit_structure(data: dict) -> list[str]:
     """
     Return a list of structural error strings (empty = valid).
 
-    Checks every component, not just the first one.
+    Strict checks: every component must have ref, lib, part, value (non-garbage),
+    and a non-empty pins list.  Circuits with < 2 components are rejected.
     """
     errors: list[str] = []
 
@@ -577,19 +578,47 @@ def _validate_circuit_structure(data: dict) -> list[str]:
     components = data.get("components")
     connections = data.get("connections")
 
+    # ── Component checks ──────────────────────────────────────────────────────
+    _GARBAGE_VALUES: frozenset[str] = frozenset(
+        {"n/a", "null", "none", "unknown", "", "tbd", "?", "x", "na"}
+    )
+
     if not isinstance(components, list) or len(components) == 0:
         errors.append("'components' missing or empty")
+    elif len(components) < 2:
+        errors.append(
+            f"circuit only has {len(components)} component(s) — need at least 2"
+        )
     else:
         for idx, comp in enumerate(components):
             if not isinstance(comp, dict):
                 errors.append(f"components[{idx}] is not a dict")
                 continue
-            for field in ("ref", "part", "pins"):
-                if field not in comp:
-                    errors.append(f"components[{idx}] missing field '{field}'")
-            if "pins" in comp and not isinstance(comp["pins"], list):
-                errors.append(f"components[{idx}].pins is not a list")
+            # All five fields are required for a valid KiCad export
+            for field in ("ref", "lib", "part", "value", "pins"):
+                if field not in comp or comp[field] in (None, "", []):
+                    errors.append(f"components[{idx}] missing/empty field '{field}'")
+            # Garbage value guard — LLM sometimes outputs placeholder text
+            val = str(comp.get("value", "")).strip().lower()
+            if val in _GARBAGE_VALUES:
+                errors.append(
+                    f"components[{idx}] ref='{comp.get('ref', '?')}' has "
+                    f"placeholder value '{comp.get('value')}' — LLM did not fill it in"
+                )
+            # Pins must be a non-empty list of dicts each with a 'number' key
+            pins = comp.get("pins")
+            if not isinstance(pins, list) or len(pins) == 0:
+                errors.append(
+                    f"components[{idx}] 'pins' must be a non-empty list"
+                )
+            else:
+                for pidx, pin in enumerate(pins):
+                    if not isinstance(pin, dict) or not pin.get("number"):
+                        errors.append(
+                            f"components[{idx}].pins[{pidx}] missing 'number'"
+                        )
 
+    # ── Connection checks ──────────────────────────────────────────────────────
     if not isinstance(connections, list) or len(connections) == 0:
         errors.append("'connections' missing or empty")
     else:
@@ -602,7 +631,7 @@ def _validate_circuit_structure(data: dict) -> list[str]:
             pins = conn.get("pins")
             if not isinstance(pins, list) or len(pins) < 2:
                 errors.append(
-                    f"connections[{idx}] net='{conn.get('net','?')}' "
+                    f"connections[{idx}] net='{conn.get('net', '?')}' "
                     "must have >= 2 pins"
                 )
 

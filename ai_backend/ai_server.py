@@ -104,21 +104,16 @@ SA_ITERATIONS      = 500
 # (keywords, template_stem, score_weight) – highest cumulative score wins.
 
 TEMPLATE_KEYWORDS: List[Tuple[List[str], str, int]] = [
-    (["555 timer", "ne555", "astable 555", "555 oscillator"], "555_timer_oscillator", 100),
-    (["555", "timer", "blink", "astable", "multivibrator"],   "555_timer",            80),
-    (["3.3v regulator", "3v3 ldo", "ams1117-3.3"],            "3v3_regulator_ldo",    100),
-    (["3.3v", "3v3", "ams1117", "ldo", "voltage regulator"], "3v3_regulator",        80),
-    (["5v regulator", "5v ldo", "7805", "5v power"],          "5v_regulator",         90),
-    (["led driver", "led array", "multiple led"],              "led_array_driver",     90),
-    (["led", "diode", "indicator", "resistor led"],            "led_resistor",         70),
-    (["opamp buffer", "unity gain buffer", "voltage follower"],"opamp_buffer",         90),
-    (["opamp", "op-amp", "operational amplifier", "gain"],    "opamp_general",        70),
-    (["mosfet switch", "high side switch", "low side switch"],"mosfet_switch",        90),
-    (["mosfet", "nmos", "pmos", "transistor switch"],         "mosfet_general",       70),
-    (["rc filter", "low pass filter", "high pass filter"],    "rc_filter",            80),
-    (["voltage divider", "resistor divider"],                  "voltage_divider",      75),
-    (["crystal oscillator", "quartz", "mhz crystal"],         "crystal_oscillator",   85),
-    (["usb power", "usb protection", "usb esd"],              "usb_protection",       90),
+    (["motor driver", "dc motor", "pwm motor", "flyback diode", "low side driver"], "motor_driver_nmos", 130),
+    (["555 timer", "ne555", "astable 555", "555 oscillator"], "555_timer", 110),
+    (["555", "timer", "blink", "astable", "multivibrator"], "555_timer", 80),
+    (["3.3v regulator", "3v3 ldo", "ams1117-3.3"], "3v3_regulator", 110),
+    (["3.3v", "3v3", "ams1117", "ldo", "voltage regulator"], "3v3_regulator", 80),
+    (["led", "diode", "indicator", "resistor led"], "led_resistor", 80),
+    (["opamp buffer", "unity gain buffer", "voltage follower"], "opamp_buffer", 100),
+    (["opamp", "op-amp", "operational amplifier", "gain"], "opamp_buffer", 70),
+    (["mosfet switch", "high side switch", "low side switch"], "mosfet_switch", 110),
+    (["mosfet", "nmos", "pmos", "transistor switch"], "mosfet_switch", 80),
 ]
 
 # ── Known KiCad power/virtual symbol prefixes to skip in ref validation ───────
@@ -1224,9 +1219,9 @@ async def generate_circuit(
     """
     Natural-language → validated CircuitData JSON → optional .kicad_sch file.
 
-    Flow:
-      1. Score all templates against prompt keywords
-      2. Fall back to LLM if no template matched and LLM is loaded
+        Flow:
+            1. Try LLM generation first (if loaded)
+            2. Optionally fall back to template matching when LLM fails
       3. Normalise connections to BoardConnection format
       4. Auto-place if all components sit at (0, 0)
       5. Run DFM and embed violations in warnings
@@ -1237,7 +1232,7 @@ async def generate_circuit(
     request_id = str(uuid.uuid4())[:8]
     warnings: List[str] = []
 
-    # ── Step 1: template scoring ──────────────────────────────────────────────
+    # ── Step 1: template scoring (for fallback only) ─────────────────────────
     prompt_lower = request.prompt.lower()
     best_name, best_score = None, 0
     for keywords, name, weight in TEMPLATE_KEYWORDS:
@@ -1247,27 +1242,81 @@ async def generate_circuit(
 
     circuit_data: Optional[Dict[str, Any]] = None
     template_used: Optional[str] = None
+    llm_failed = False
 
-    if best_name and best_name in _state.template_cache:
+    # Optional hard mode: force AI generation only (no template fallback)
+    strict_llm = False
+    if request.constraints and "strict_llm" in request.constraints:
+        raw = request.constraints.get("strict_llm")
+        if isinstance(raw, bool):
+            strict_llm = raw
+        elif isinstance(raw, str):
+            strict_llm = raw.strip().lower() in {"1", "true", "yes", "on"}
+        else:
+            strict_llm = bool(raw)
+
+    # Prefer deterministic templates when a strong keyword match exists.
+    # This improves reliability for known circuits (e.g., motor driver, 555).
+    prefer_template = bool(best_name and best_name in _state.template_cache and best_score >= 100)
+    if prefer_template and not strict_llm:
         circuit_data = _state.template_cache[best_name]
         template_used = best_name
-    elif _state.llm:
+        warnings.append(f"Used template match: {best_name}")
+
+    # ── LLM first ─────────────────────────────────────────────────────────────
+    if _state.llm and circuit_data is None:
         try:
-            # generate_circuit_json is async — must be awaited.  Without the
-            # await it returns a coroutine object (truthy) so circuit_data would
-            # be set to a coroutine instead of a dict, silently bypassing the
-            # template fallback and裂failing JSON serialisation later.
             circuit_data = await _state.llm.generate_circuit_json(request.prompt) or None
         except Exception as exc:
+            llm_failed = True
             warnings.append(f"LLM generation failed: {exc}")
+
+    # ── Template fallback (only when needed) ─────────────────────────────────
+    if not circuit_data and not strict_llm and best_name and best_name in _state.template_cache:
+        circuit_data = _state.template_cache[best_name]
+        template_used = best_name
+        if _state.llm:
+            warnings.append(f"LLM returned no valid result, used template fallback: {best_name}")
+    elif not circuit_data and strict_llm and best_name and best_name in _state.template_cache:
+        warnings.append("Template fallback available but disabled by constraints.strict_llm=true")
+
+    if not circuit_data:
+        if _state.llm and (llm_failed or strict_llm):
+            return GenerateResponse(
+                success=False,
+                error=(
+                    "LLM could not generate a valid circuit. "
+                    "Try a more specific prompt, or set constraints.strict_llm=false "
+                    "to allow template fallback."
+                ),
+                warnings=warnings,
+                request_id=request_id,
+            )
+
+    # ── Step 1b: strict schema check for KiCad exportability ───────────────
+    # BoardData is permissive and can pass data that cannot be exported to
+    # KiCad (e.g., missing lib/part/pins). Validate early against CircuitData
+    # so unusable LLM outputs fail fast or can fall back to template.
+    try:
+        from circuit_schema import CircuitData  # type: ignore
+        CircuitData(**circuit_data)
+    except Exception as exc:
+        warnings.append(f"Circuit schema validation failed: {exc}")
+        circuit_data = None
+
+    # Retry fallback when LLM produced invalid schema but template exists
+    if not circuit_data and not strict_llm and best_name and best_name in _state.template_cache:
+        circuit_data = _state.template_cache[best_name]
+        template_used = best_name
+        warnings.append(f"Used template fallback after invalid LLM schema: {best_name}")
 
     if not circuit_data:
         return GenerateResponse(
             success=False,
             error=(
-                "No matching template found and LLM is unavailable. "
-                "Try: '555 timer', '3.3V regulator', 'LED resistor', "
-                "'op-amp buffer', 'MOSFET switch'."
+                "Generated circuit is not valid enough for KiCad export. "
+                "Try a clearer prompt (include component names + power rails), "
+                "or disable strict LLM mode for template fallback."
             ),
             warnings=warnings,
             request_id=request_id,

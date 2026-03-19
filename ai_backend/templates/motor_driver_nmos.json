@@ -1,0 +1,133 @@
+{
+  "description": "12V DC motor low-side PWM driver using logic-level NMOS with flyback protection and supply decoupling",
+  "components": [
+    {
+      "ref": "J1",
+      "lib": "Connector_Generic",
+      "part": "Conn_01x02",
+      "value": "PWR_IN",
+      "footprint": "TerminalBlock:TerminalBlock_bornier-2_P5.08mm",
+      "description": "12V power input connector",
+      "pins": [
+        {"number": "1", "name": "+12V"},
+        {"number": "2", "name": "GND"}
+      ]
+    },
+    {
+      "ref": "J2",
+      "lib": "Connector_Generic",
+      "part": "Conn_01x02",
+      "value": "MOTOR",
+      "footprint": "TerminalBlock:TerminalBlock_bornier-2_P5.08mm",
+      "description": "Motor output connector",
+      "pins": [
+        {"number": "1", "name": "M+"},
+        {"number": "2", "name": "M-"}
+      ]
+    },
+    {
+      "ref": "J3",
+      "lib": "Connector_Generic",
+      "part": "Conn_01x03",
+      "value": "CTRL",
+      "footprint": "Connector_PinHeader_2.54mm:PinHeader_1x03_P2.54mm_Vertical",
+      "description": "Control header: PWM, GND, +5V",
+      "pins": [
+        {"number": "1", "name": "PWM"},
+        {"number": "2", "name": "GND"},
+        {"number": "3", "name": "+5V"}
+      ]
+    },
+    {
+      "ref": "Q1",
+      "lib": "Device",
+      "part": "Q_NMOS_GSD",
+      "value": "AO3400A",
+      "footprint": "Package_TO_SOT_SMD:SOT-23",
+      "description": "Logic-level N-channel MOSFET, low-side switch",
+      "pins": [
+        {"number": "1", "name": "S"},
+        {"number": "2", "name": "G"},
+        {"number": "3", "name": "D"}
+      ]
+    },
+    {
+      "ref": "R1",
+      "lib": "Device",
+      "part": "R",
+      "value": "100",
+      "footprint": "Resistor_SMD:R_0805_2012Metric",
+      "description": "Gate series resistor",
+      "pins": [
+        {"number": "1", "name": "1"},
+        {"number": "2", "name": "2"}
+      ]
+    },
+    {
+      "ref": "R2",
+      "lib": "Device",
+      "part": "R",
+      "value": "10k",
+      "footprint": "Resistor_SMD:R_0805_2012Metric",
+      "description": "Gate pull-down resistor",
+      "pins": [
+        {"number": "1", "name": "1"},
+        {"number": "2", "name": "2"}
+      ]
+    },
+    {
+      "ref": "D1",
+      "lib": "Device",
+      "part": "D_Schottky",
+      "value": "SS34",
+      "footprint": "Diode_SMD:D_SMA",
+      "description": "Flyback diode across motor",
+      "pins": [
+        {"number": "1", "name": "A"},
+        {"number": "2", "name": "K"}
+      ]
+    },
+    {
+      "ref": "C1",
+      "lib": "Device",
+      "part": "CP",
+      "value": "470uF",
+      "footprint": "Capacitor_THT:CP_Radial_D8.0mm_P3.50mm",
+      "description": "Bulk capacitor on motor supply",
+      "pins": [
+        {"number": "1", "name": "+"},
+        {"number": "2", "name": "-"}
+      ]
+    },
+    {
+      "ref": "C2",
+      "lib": "Device",
+      "part": "C",
+      "value": "100nF",
+      "footprint": "Capacitor_SMD:C_0805_2012Metric",
+      "description": "Local decoupling capacitor",
+      "pins": [
+        {"number": "1", "name": "1"},
+        {"number": "2", "name": "2"}
+      ]
+    }
+  ],
+  "connections": [
+    {"net": "VMOTOR", "pins": ["J1.1", "J2.1", "D1.2", "C1.1", "C2.1"]},
+    {"net": "GND", "pins": ["J1.2", "J3.2", "Q1.1", "R2.2", "C1.2", "C2.2"]},
+    {"net": "MOTOR_NEG", "pins": ["J2.2", "Q1.3", "D1.1"]},
+    {"net": "PWM_IN", "pins": ["J3.1", "R1.1"]},
+    {"net": "GATE", "pins": ["R1.2", "R2.1", "Q1.2"]},
+    {"net": "VLOGIC", "pins": ["J3.3"]}
+  ],
+  "board_width": 60.0,
+  "board_height": 50.0,
+  "metadata": {
+    "author": "AI PCB Assistant",
+    "version": "1.0",
+    "category": "motor_driver",
+    "topology": "nmos_low_side_pwm",
+    "motor_voltage": "12V",
+    "notes": "Use wider traces for VMOTOR and MOTOR_NEG paths"
+  }
+}

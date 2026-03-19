@@ -54,8 +54,7 @@
   "connections": [
     {"net": "VCC",     "pins": ["R3.1", "D1.2"]},
     {"net": "LOAD",    "pins": ["R3.2", "Q1.3", "D1.1"]},
-    {"net": "CTRL",    "pins": ["R1.1"]},
-    {"net": "GATE",    "pins": ["R1.2", "R2.1", "Q1.2"]},
+    {"net": "CTRL",    "pins": ["R1.1", "R1.2", "R2.1", "Q1.2"]},
     {"net": "GND",     "pins": ["Q1.1", "R2.2"]}
   ],
   "board_width": 50.0,
