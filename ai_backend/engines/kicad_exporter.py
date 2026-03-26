@@ -30,10 +30,18 @@ import re
 from typing import Optional
 from dataclasses import dataclass, field
 
-# Import from parent package
-import sys
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-from circuit_schema import CircuitData, Component, Connection, Pin
+# Import from parent package — use relative import when running as part of
+# the ai_backend package (normal case) and fall back to path manipulation
+# only when executed directly as a standalone script.
+try:
+    from ..circuit_schema import CircuitData, Component, Connection, Pin
+except ImportError:
+    import sys as _sys
+    import os as _os
+    _parent = _os.path.abspath(_os.path.join(_os.path.dirname(__file__), ".."))
+    if _parent not in _sys.path:
+        _sys.path.insert(0, _parent)
+    from circuit_schema import CircuitData, Component, Connection, Pin
 
 logger = logging.getLogger(__name__)
 
@@ -44,7 +52,7 @@ logger = logging.getLogger(__name__)
 
 KICAD_VERSION = 20231120
 GENERATOR = "kicad_copilot"
-GENERATOR_VERSION = "1.1"   # bumped for fix
+GENERATOR_VERSION = "1.3"   # v1.3: D_Zener/D_Schottky symbols, junction generation, sys.path fix
 DEFAULT_PAPER = "A4"
 
 # Schematic grid: KiCad uses 1.27mm (50mil) grid for schematics
@@ -590,11 +598,14 @@ LIB_SYMBOL_GENERATORS = {
     "Device:LED":                   _lib_symbol_led,
     "Device:L":                     _lib_symbol_inductor,
     "Device:D":                     _lib_symbol_diode,
+    "Device:D_Zener":               lambda lib_id: _lib_symbol_diode(lib_id),
+    "Device:D_Schottky":            lambda lib_id: _lib_symbol_diode(lib_id),
     "Timer:NE555":                  _lib_symbol_ne555,
     "Regulator_Linear:AMS1117-3.3": _lib_symbol_regulator,
     "Regulator_Linear:LM7805":      lambda lib_id: _lib_symbol_regulator(lib_id),
     "Amplifier_Operational:LM358":  _lib_symbol_opamp,
     "Device:Q_NMOS_GSD":            _lib_symbol_nmos,
+    "Device:Q_NMOS_DGS":            _lib_symbol_nmos,
 }
 
 
@@ -655,6 +666,19 @@ KNOWN_PIN_OFFSETS: dict = {
         "2": (-2.54, 0),     # G (Gate)
         "3": (2.54, 5.08),   # D (Drain)
     },
+    "Device:Q_NMOS_DGS": {
+        "1": (2.54, 5.08),   # D (Drain)
+        "2": (-2.54, 0),     # G (Gate)
+        "3": (2.54, -5.08),  # S (Source)
+    },
+    "Device:D_Zener": {
+        "1": (-3.81, 0),   # Anode
+        "2": (3.81, 0),    # Cathode
+    },
+    "Device:D_Schottky": {
+        "1": (-3.81, 0),   # Anode
+        "2": (3.81, 0),    # Cathode
+    },
 }
 
 
@@ -680,6 +704,7 @@ class KiCadSchematicWriter:
         """Full pipeline: CircuitData → .kicad_sch string."""
         self._pwr_counter = 0
 
+        self._normalize_input_coordinates(circuit)
         self._auto_place(circuit)
 
         comp_map = {c.ref: c for c in circuit.components}
@@ -696,7 +721,7 @@ class KiCadSchematicWriter:
         lib_symbols  = self._build_lib_symbols(unique_parts, power_nets)
         symbols      = self._build_symbols(circuit.components)
         power_syms   = self._build_power_symbols(circuit.connections, comp_map, power_nets)
-        wires        = self._build_wires(circuit.connections, comp_map, power_nets)
+        wires, junctions = self._build_wires(circuit.connections, comp_map, power_nets)
         labels       = self._build_labels(circuit.connections, comp_map, power_nets)
         footer       = self._build_footer()
 
@@ -711,6 +736,8 @@ class KiCadSchematicWriter:
             "",
             *wires,
             "",
+            *junctions,
+            "",
             *labels,
             "",
             footer,
@@ -718,6 +745,74 @@ class KiCadSchematicWriter:
         ]
 
         return "\n".join(s for s in sections if s is not None) + "\n"
+
+    def _normalize_input_coordinates(self, circuit: CircuitData) -> None:
+        """Map board-style coordinates into a readable schematic-page area.
+
+        Many generated circuits provide component positions in board space
+        (0..board_width, 0..board_height). KiCad schematic sheets are not board
+        coordinates, so those values render cramped in the top-left corner.
+        """
+        if not circuit.components:
+            return
+
+        # Leave pure auto-placement cases untouched.
+        if all(c.x == 0.0 and c.y == 0.0 for c in circuit.components):
+            return
+
+        xs = [c.x for c in circuit.components]
+        ys = [c.y for c in circuit.components]
+        bw = float(getattr(circuit, "board_width", 0.0) or 0.0)
+        bh = float(getattr(circuit, "board_height", 0.0) or 0.0)
+
+        looks_like_board_space = (
+            bw > 0.0 and bh > 0.0
+            and min(xs) >= -1.0 and min(ys) >= -1.0
+            and max(xs) <= bw + 1.0 and max(ys) <= bh + 1.0
+        )
+
+        looks_like_centered_space = (
+            bw > 0.0 and bh > 0.0
+            and min(xs) >= -(bw / 2.0) - 2.0 and max(xs) <= (bw / 2.0) + 2.0
+            and min(ys) >= -(bh / 2.0) - 2.0 and max(ys) <= (bh / 2.0) + 2.0
+        )
+
+        if looks_like_board_space or looks_like_centered_space:
+            if looks_like_centered_space and not looks_like_board_space:
+                src_points = [(c.x + bw / 2.0, c.y + bh / 2.0) for c in circuit.components]
+            else:
+                src_points = [(c.x, c.y) for c in circuit.components]
+
+            src_xs = [p[0] for p in src_points]
+            src_ys = [p[1] for p in src_points]
+            min_x, max_x = min(src_xs), max(src_xs)
+            min_y, max_y = min(src_ys), max(src_ys)
+            span_x = max(0.1, max_x - min_x)
+            span_y = max(0.1, max_y - min_y)
+
+            # Fit and center into a comfortable A4 schematic working area.
+            target_cx = 140.0
+            target_cy = 95.0
+            src_cx = (min_x + max_x) / 2.0
+            src_cy = (min_y + max_y) / 2.0
+
+            # Keep the cluster readable: shrink large layouts and also enlarge
+            # very small ones so symbols/labels do not overlap visually.
+            max_target_w = 170.0
+            max_target_h = 110.0
+            min_target_w = 120.0
+            min_target_h = 75.0
+
+            fit_scale = min(max_target_w / span_x, max_target_h / span_y)
+            fill_scale = min(min_target_w / span_x, min_target_h / span_y)
+            scale = max(fill_scale, min(fit_scale, 3.0))
+
+            for comp, (sx, sy) in zip(circuit.components, src_points):
+                tx = target_cx + (sx - src_cx) * scale
+                ty = target_cy + (sy - src_cy) * scale
+                # Keep a safe margin from sheet borders.
+                comp.x = max(25.0, min(255.0, tx))
+                comp.y = max(20.0, min(175.0, ty))
 
     # -------------------------------------------------------------------------
     # Header & Footer
@@ -1020,14 +1115,17 @@ class KiCadSchematicWriter:
     # -------------------------------------------------------------------------
 
     def _build_wires(self, connections: list, comp_map: dict,
-                     power_nets: Optional[set] = None) -> list:
+                     power_nets: Optional[set] = None) -> tuple:
+        """Build wire segments and junction dots.
+
+        Returns (wires: list[str], junctions: list[str]).
+        """
         wires = []
+        junctions = []
+        junction_pts: set = set()   # de-dup on rounded coords
         power_nets = power_nets or set()
 
         for conn in connections:
-            if conn.net in power_nets:
-                continue
-
             pin_positions = []
             for pin_ref in conn.pins:
                 px, py = self._resolve_pin_position(pin_ref, comp_map)
@@ -1035,6 +1133,23 @@ class KiCadSchematicWriter:
                     pin_positions.append((px, py))
 
             if len(pin_positions) < 2:
+                continue
+
+            # For power nets, create explicit star routing from the first pin.
+            if conn.net in power_nets:
+                ax, ay = pin_positions[0]
+                for x2, y2 in pin_positions[1:]:
+                    if abs(ax - x2) < 0.01 or abs(ay - y2) < 0.01:
+                        wires.append(self._wire_segment(ax, ay, x2, y2))
+                    else:
+                        wires.append(self._wire_segment(ax, ay, x2, ay))
+                        wires.append(self._wire_segment(x2, ay, x2, y2))
+                # Junction at hub if 3+ pins converge
+                if len(pin_positions) >= 3:
+                    jkey = (round(ax, 2), round(ay, 2))
+                    if jkey not in junction_pts:
+                        junction_pts.add(jkey)
+                        junctions.append(self._junction(ax, ay))
                 continue
 
             for i in range(len(pin_positions) - 1):
@@ -1047,12 +1162,25 @@ class KiCadSchematicWriter:
                     mid_x, mid_y = x2, y1
                     wires.append(self._wire_segment(x1, y1, mid_x, mid_y))
                     wires.append(self._wire_segment(mid_x, mid_y, x2, y2))
+                    # Junction at L-bend mid-point if chained
+                    if i > 0:
+                        jkey = (round(x1, 2), round(y1, 2))
+                        if jkey not in junction_pts:
+                            junction_pts.add(jkey)
+                            junctions.append(self._junction(x1, y1))
 
-        return wires
+        return wires, junctions
 
     def _wire_segment(self, x1: float, y1: float, x2: float, y2: float) -> str:
         return f"""  (wire (pts {_xy(x1, y1)} {_xy(x2, y2)})
     {_stroke(0)}
+    (uuid {_quote(_uuid())})
+  )"""
+
+    @staticmethod
+    def _junction(x: float, y: float) -> str:
+        """Generate a junction dot at a wire T-intersection."""
+        return f"""  (junction (at {x:.4f} {y:.4f}) (diameter 0) (color 0 0 0 0)
     (uuid {_quote(_uuid())})
   )"""
 

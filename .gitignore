@@ -127,3 +127,8 @@ dist/
 # Generated Output JSON
 # ===========================
 ai_backend/output/*.json
+
+# ===========================
+# SKiDL Artifacts
+# ===========================
+ai_backend/skidl_REPL.*

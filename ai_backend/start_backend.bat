@@ -9,7 +9,17 @@ REM Change to the directory containing this batch file
 cd /d "%~dp0"
 
 REM Activate virtual environment
-call venv\Scripts\activate.bat
+if exist "venv\Scripts\activate.bat" (
+	call venv\Scripts\activate.bat
+) else if exist "..\.venv\Scripts\activate.bat" (
+	call ..\.venv\Scripts\activate.bat
+) else (
+	echo WARNING: No virtual environment activate script found. Continuing with current Python.
+)
+
+REM Use qwen2.5-coder:7b for backend startup
+set "OLLAMA_MODEL=qwen2.5-coder:7b"
+echo Using OLLAMA_MODEL=%OLLAMA_MODEL%
 
 REM Start server
 python ai_server.py

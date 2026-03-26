@@ -1,5 +1,5 @@
 """
-Schematic Engine v1.2 — Converts natural language descriptions to KiCad schematics.
+Schematic Engine v2.0 — Converts natural language descriptions to KiCad schematics.
 
 Pipeline: prompt → LLM JSON → CircuitData validation → .kicad_sch export.
 
@@ -49,6 +49,8 @@ import re
 from pathlib import Path
 from typing import Any, Optional
 
+from services.generation_service import extract_python_code_block, screen_skidl_code
+
 logger = logging.getLogger(__name__)
 
 # ── Output directory ──────────────────────────────────────────────────────────
@@ -95,56 +97,114 @@ class _ComponentEntry:
 # Priority-ordered list — first match wins.
 COMPONENT_ALIASES: list[_ComponentEntry] = [
     # ── Transistors (specific before generic) ────────────────────────────────
-    _ComponentEntry("nmos",       "Device",                  "Q_NMOS_DGS",         "N-channel MOSFET"),
-    _ComponentEntry("pmos",       "Device",                  "Q_PMOS_DGS",         "P-channel MOSFET"),
-    _ComponentEntry("mosfet",     "Device",                  "Q_NMOS_DGS",         "N-channel MOSFET (default)"),
-    _ComponentEntry("bjt npn",    "Device",                  "Q_NPN_BCE",          "NPN bipolar transistor"),
-    _ComponentEntry("bjt pnp",    "Device",                  "Q_PNP_BCE",          "PNP bipolar transistor"),
-    _ComponentEntry("bjt",        "Device",                  "Q_NPN_BCE",          "NPN bipolar transistor (default)"),
-    _ComponentEntry("transistor", "Device",                  "Q_NPN_BCE",          "NPN bipolar transistor"),
+    _ComponentEntry("nmos",           "Device",                  "Q_NMOS_DGS",         "N-channel MOSFET"),
+    _ComponentEntry("pmos",           "Device",                  "Q_PMOS_DGS",         "P-channel MOSFET"),
+    _ComponentEntry("mosfet",         "Device",                  "Q_NMOS_DGS",         "N-channel MOSFET (default)"),
+    _ComponentEntry("igbt",           "Device",                  "Q_IGBT_CGE",         "IGBT"),
+    _ComponentEntry("triac",          "Device",                  "Q_TRIAC_AAG",        "Triac"),
+    _ComponentEntry("bjt npn",        "Device",                  "Q_NPN_BCE",          "NPN bipolar transistor"),
+    _ComponentEntry("bjt pnp",        "Device",                  "Q_PNP_BCE",          "PNP bipolar transistor"),
+    _ComponentEntry("bjt",            "Device",                  "Q_NPN_BCE",          "NPN bipolar transistor (default)"),
+    _ComponentEntry("transistor",     "Device",                  "Q_NPN_BCE",          "NPN bipolar transistor"),
     # ── Op-amps ───────────────────────────────────────────────────────────────
-    _ComponentEntry("opamp",      "Device",                  "Opamp_Dual",         "Generic dual op-amp"),
-    _ComponentEntry("op amp",     "Device",                  "Opamp_Dual",         "Generic dual op-amp"),
-    _ComponentEntry("op-amp",     "Device",                  "Opamp_Dual",         "Generic dual op-amp"),
-    _ComponentEntry("comparator", "Device",                  "Comparator",         "Generic comparator"),
+    _ComponentEntry("opamp",          "Device",                  "Opamp_Dual",         "Generic dual op-amp"),
+    _ComponentEntry("op amp",         "Device",                  "Opamp_Dual",         "Generic dual op-amp"),
+    _ComponentEntry("op-amp",         "Device",                  "Opamp_Dual",         "Generic dual op-amp"),
+    _ComponentEntry("comparator",     "Device",                  "Comparator",         "Generic comparator"),
+    _ComponentEntry("voltage ref",    "Reference_Voltage",       "LM4040DBZ-2.5",     "2.5V voltage reference"),
     # ── Regulators ───────────────────────────────────────────────────────────
-    _ComponentEntry("ldo",        "Regulator_Linear",        "AMS1117-3.3",        "3.3 V LDO regulator"),
-    _ComponentEntry("regulator",  "Regulator_Linear",        "L78L05_SOT89",       "5 V linear regulator"),
-    _ComponentEntry("buck",       "Regulator_SwitchedMode",  "TPS54331",           "Buck converter"),
-    _ComponentEntry("boost",      "Regulator_SwitchedMode",  "MC34063A",           "Boost converter"),
+    _ComponentEntry("ldo",            "Regulator_Linear",        "AMS1117-3.3",        "3.3 V LDO regulator"),
+    _ComponentEntry("regulator",      "Regulator_Linear",        "L78L05_SOT89",       "5 V linear regulator"),
+    _ComponentEntry("buck",           "Regulator_SwitchedMode",  "TPS54331",           "Buck converter"),
+    _ComponentEntry("boost",          "Regulator_SwitchedMode",  "MC34063A",           "Boost converter"),
     # ── Logic / MCU ──────────────────────────────────────────────────────────
-    _ComponentEntry("atmega",     "MCU_Microchip_ATmega",    "ATmega328P-AU",      "ATmega328P microcontroller"),
-    _ComponentEntry("attiny",     "MCU_Microchip_ATtiny",    "ATtiny85-20SU",      "ATtiny85 microcontroller"),
-    _ComponentEntry("stm32",      "MCU_ST_STM32F1",          "STM32F103C8Tx",      "STM32F103 microcontroller"),
-    _ComponentEntry("mcu",        "MCU_Microchip_ATmega",    "ATmega328P-AU",      "ATmega328P (generic MCU fallback)"),
-    _ComponentEntry("555",        "Timer",                   "NE555",              "555 timer"),
-    _ComponentEntry("timer",      "Timer",                   "NE555",              "555 timer"),
+    _ComponentEntry("esp32",          "MCU_Espressif",           "ESP32-WROOM-32",     "ESP32 Wi-Fi/BT module"),
+    _ComponentEntry("esp8266",        "MCU_Espressif",           "ESP-12E",            "ESP8266 Wi-Fi module"),
+    _ComponentEntry("arduino nano",   "MCU_Module",              "Arduino_Nano_v3.x",  "Arduino Nano v3"),
+    _ComponentEntry("arduino",        "MCU_Module",              "Arduino_UNO_R3",     "Arduino UNO R3"),
+    _ComponentEntry("atmega",         "MCU_Microchip_ATmega",    "ATmega328P-AU",      "ATmega328P microcontroller"),
+    _ComponentEntry("attiny",         "MCU_Microchip_ATtiny",    "ATtiny85-20SU",      "ATtiny85 microcontroller"),
+    _ComponentEntry("stm32f4",        "MCU_ST_STM32F4",          "STM32F405RGTx",      "STM32F405 microcontroller"),
+    _ComponentEntry("stm32",          "MCU_ST_STM32F1",          "STM32F103C8Tx",      "STM32F103 microcontroller"),
+    _ComponentEntry("mcu",            "MCU_Microchip_ATmega",    "ATmega328P-AU",      "ATmega328P (generic MCU fallback)"),
+    _ComponentEntry("555",            "Timer",                   "NE555",              "555 timer"),
+    _ComponentEntry("timer",          "Timer",                   "NE555",              "555 timer"),
     # ── Passive components ────────────────────────────────────────────────────
-    _ComponentEntry("resistor",   "Device",                  "R",                  "Resistor"),
-    _ComponentEntry("capacitor",  "Device",                  "C",                  "Capacitor"),
-    _ComponentEntry("inductor",   "Device",                  "L",                  "Inductor"),
-    _ComponentEntry("ferrite",    "Device",                  "Ferrite_Bead",       "Ferrite bead"),
-    _ComponentEntry("crystal",    "Device",                  "Crystal",            "Crystal oscillator"),
-    _ComponentEntry("fuse",       "Device",                  "Fuse",               "Fuse"),
-    _ComponentEntry("varistor",   "Device",                  "D_TVS",              "TVS diode / varistor"),
+    _ComponentEntry("potentiometer",  "Device",                  "R_Potentiometer",    "Potentiometer"),
+    _ComponentEntry("thermistor",     "Device",                  "Thermistor_NTC",     "NTC thermistor"),
+    _ComponentEntry("resistor",       "Device",                  "R",                  "Resistor"),
+    _ComponentEntry("capacitor",      "Device",                  "C",                  "Capacitor"),
+    _ComponentEntry("inductor",       "Device",                  "L",                  "Inductor"),
+    _ComponentEntry("ferrite",        "Device",                  "Ferrite_Bead",       "Ferrite bead"),
+    _ComponentEntry("crystal",        "Device",                  "Crystal",            "Crystal oscillator"),
+    _ComponentEntry("fuse",           "Device",                  "Fuse",               "Fuse"),
+    _ComponentEntry("varistor",       "Device",                  "D_TVS",              "TVS diode / varistor"),
     # ── Diodes ───────────────────────────────────────────────────────────────
-    _ComponentEntry("zener",      "Device",                  "D_Zener",            "Zener diode"),
-    _ComponentEntry("schottky",   "Device",                  "D_Schottky",         "Schottky diode"),
-    _ComponentEntry("tvs",        "Device",                  "D_TVS",              "TVS protection diode"),
-    _ComponentEntry("led",        "Device",                  "LED",                "LED indicator"),
-    _ComponentEntry("diode",      "Device",                  "D",                  "Generic diode"),
+    _ComponentEntry("zener",          "Device",                  "D_Zener",            "Zener diode"),
+    _ComponentEntry("schottky",       "Device",                  "D_Schottky",         "Schottky diode"),
+    _ComponentEntry("tvs",            "Device",                  "D_TVS",              "TVS protection diode"),
+    _ComponentEntry("led",            "Device",                  "LED",                "LED indicator"),
+    _ComponentEntry("diode",          "Device",                  "D",                  "Generic diode"),
     # ── Connectors ───────────────────────────────────────────────────────────
-    _ComponentEntry("usb c",      "Connector",               "USB_C_Receptacle_USB2.0", "USB-C receptacle"),
-    _ComponentEntry("usb",        "Connector",               "USB_B_Micro",        "Micro-USB connector"),
-    _ComponentEntry("header",     "Connector_PinHeader_2.54mm", "PinHeader_1x02_P2.54mm_Vertical", "2-pin header"),
-    _ComponentEntry("connector",  "Connector_Generic",       "Conn_01x02",         "Generic 2-pin connector"),
-    # ── Opto ─────────────────────────────────────────────────────────────────
-    _ComponentEntry("optocoupler","Device",                  "PC817",              "Optocoupler"),
-    _ComponentEntry("relay",      "Relay",                   "G5V-1",              "Signal relay"),
+    _ComponentEntry("usb c",          "Connector",               "USB_C_Receptacle_USB2.0", "USB-C receptacle"),
+    _ComponentEntry("usb",            "Connector",               "USB_B_Micro",        "Micro-USB connector"),
+    _ComponentEntry("header",         "Connector_PinHeader_2.54mm", "PinHeader_1x02_P2.54mm_Vertical", "2-pin header"),
+    _ComponentEntry("connector",      "Connector_Generic",       "Conn_01x02",         "Generic 2-pin connector"),
+    # ── Switches / Input ─────────────────────────────────────────────────────
+    _ComponentEntry("push button",    "Switch",                  "SW_Push",            "Momentary push button"),
+    _ComponentEntry("switch",         "Switch",                  "SW_SPDT",            "SPDT toggle switch"),
+    _ComponentEntry("button",         "Switch",                  "SW_Push",            "Momentary push button"),
+    # ── Audio / Output ───────────────────────────────────────────────────────
+    _ComponentEntry("buzzer",         "Device",                  "Buzzer",             "Piezo buzzer"),
+    _ComponentEntry("speaker",        "Device",                  "Speaker",            "Speaker"),
+    # ── Sensor ───────────────────────────────────────────────────────────────
+    _ComponentEntry("temperature sensor", "Sensor_Temperature",  "LM35-LP",            "LM35 temperature sensor"),
+    _ComponentEntry("photoresistor",  "Device",                  "R_Photo",            "Light dependent resistor"),
+    _ComponentEntry("sensor",         "Sensor",                  "DHT11",              "Generic sensor (DHT11 default)"),
+    # ── Opto / Relay ─────────────────────────────────────────────────────────
+    _ComponentEntry("optocoupler",    "Device",                  "PC817",              "Optocoupler"),
+    _ComponentEntry("relay",          "Relay",                   "G5V-1",              "Signal relay"),
     # ── Memory / Storage ─────────────────────────────────────────────────────
-    _ComponentEntry("eeprom",     "Memory_EEPROM",           "AT24C02",            "I²C EEPROM"),
-    _ComponentEntry("flash",      "Memory_Flash",            "W25Q32JV",           "SPI NOR flash"),
+    _ComponentEntry("eeprom",         "Memory_EEPROM",           "AT24C02",            "I2C EEPROM"),
+    _ComponentEntry("flash",          "Memory_Flash",            "W25Q32JV",           "SPI NOR flash"),
 ]
+
+
+# ── Default footprint lookup ──────────────────────────────────────────────────
+# When the LLM omits footprint, auto-populate a sensible default based on the
+# component reference prefix.
+
+DEFAULT_FOOTPRINTS: dict[str, str] = {
+    "R":   "Resistor_SMD:R_0805_2012Metric",
+    "C":   "Capacitor_SMD:C_0805_2012Metric",
+    "L":   "Inductor_SMD:L_0805_2012Metric",
+    "D":   "Diode_SMD:D_SOD-123",
+    "LED": "LED_SMD:LED_0805_2012Metric",
+    "Q":   "Package_TO_SOT_SMD:SOT-23",
+    "U":   "Package_DIP:DIP-8_W7.62mm",
+    "IC":  "Package_DIP:DIP-8_W7.62mm",
+    "F":   "Fuse:Fuse_0805_2012Metric",
+    "Y":   "Crystal:Crystal_HC49-U_Vertical",
+    "SW":  "Button_Switch_SMD:SW_SPST_TL3305",
+    "J":   "Connector_PinHeader_2.54mm:PinHeader_1x02_P2.54mm_Vertical",
+    "BZ":  "Buzzer_Beeper:Buzzer_12x9.5RM7.6",
+    "FB":  "Inductor_SMD:L_0805_2012Metric",
+}
+
+
+def _auto_populate_footprints(circuit_dict: dict) -> dict:
+    """Fill missing footprints on components using DEFAULT_FOOTPRINTS."""
+    for comp in circuit_dict.get("components", []):
+        fp = (comp.get("footprint") or "").strip()
+        if fp:
+            continue
+        ref = comp.get("ref", "")
+        prefix = "".join(c for c in ref if c.isalpha()).upper()
+        default_fp = DEFAULT_FOOTPRINTS.get(prefix, "")
+        if default_fp:
+            comp["footprint"] = default_fp
+            logger.debug("Auto-populated footprint for %s: %s", ref, default_fp)
+    return circuit_dict
 
 
 def list_all_component_aliases() -> list[dict[str, str]]:
@@ -256,6 +316,9 @@ async def generate_schematic(llm: Any, prompt: str) -> dict[str, Any]:
                 "download_url":    None,
                 "error":           "LLM returned empty circuit data",
             }
+
+        # ── Step 1b: auto-populate missing footprints ────────────────────
+        _auto_populate_footprints(circuit_dict)
 
         # ── Step 2: validate against CircuitData schema ───────────────────────
         # Import at module level is not possible because circuit_schema lives at
@@ -380,32 +443,25 @@ def _safe_slug(text: str, max_len: int = 48) -> str:
 
 
 # ── Deprecated legacy stubs ───────────────────────────────────────────────────
-# Kept only for import compatibility with any external code that references them.
-# They are no-ops and clearly documented as such.  _validate_skidl_code now
-# returns False (was True) so callers cannot mistake it for a passing check.
+# Kept for compatibility with old imports, but now routed to real behavior
+# or explicit failure to avoid silent no-op paths.
 
 def _clean_generated_code(code: str) -> str:
-    """Deprecated no-op stub — returns input unchanged."""
-    logger.warning("_clean_generated_code() is a deprecated no-op stub")
-    return code
+    """Deprecated shim: strips markdown fences/token artifacts from generated code."""
+    logger.warning("_clean_generated_code() is deprecated; use ai_server SKiDL pipeline")
+    return extract_python_code_block(code)
 
 
 def _validate_skidl_code(code: str) -> bool:
-    """
-    Deprecated stub — always returns False.
-
-    NOTE: the original returned True, giving callers a false sense that
-    validation had passed.  Now returns False so any code that checks the
-    return value knows this is an unimplemented path.
-    """
-    logger.warning("_validate_skidl_code() is a deprecated stub — validation not performed")
-    return False
+    """Deprecated shim: basic static validation via shared generation service."""
+    logger.warning("_validate_skidl_code() is deprecated; use ai_server SKiDL pipeline")
+    return screen_skidl_code(code) is None
 
 
 def _execute_skidl(code: str) -> Optional[str]:
-    """Deprecated no-op stub — always returns None."""
-    logger.warning("_execute_skidl() is a deprecated no-op stub")
-    return None
+    """Deprecated shim: explicit failure instead of silent no-op execution."""
+    logger.warning("_execute_skidl() is deprecated and disabled in schematic_engine")
+    raise RuntimeError("Deprecated path: use ai_server /generate SKiDL pipeline")
 
 
 # ── Backward-compatible alias ─────────────────────────────────────────────────

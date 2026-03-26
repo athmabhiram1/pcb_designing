@@ -13,20 +13,15 @@ if (-not (Test-Path $srcDir)) {
 
 $targets = @(
     "$env:APPDATA\KiCad\9.0\scripting\plugins\ai_pcb_assistant",
-    "$env:APPDATA\kicad\9.0\scripting\plugins\ai_pcb_assistant"
+    "$env:APPDATA\kicad\9.0\scripting\plugins\ai_pcb_assistant",
+    "$env:APPDATA\KiCad\9.0\3rdparty\plugins\ai_pcb_assistant",
+    "$env:APPDATA\kicad\9.0\3rdparty\plugins\ai_pcb_assistant"
 )
 
 $targets = $targets |
     Where-Object { $_ -and $_.Trim().Length -gt 0 } |
     ForEach-Object { [System.IO.Path]::GetFullPath($_) } |
     Sort-Object -Unique
-
-$filesToCopy = @(
-    "__init__.py",
-    "plugin.py",
-    "pcbnew_action.py",
-    "metadata.json"
-)
 
 $stamp = Get-Date -Format "yyyyMMdd_HHmmss"
 
@@ -45,16 +40,12 @@ foreach ($target in $targets) {
         New-Item -ItemType Directory -Path $target -Force | Out-Null
     }
 
-    foreach ($file in $filesToCopy) {
-        $src = Join-Path $srcDir $file
-        if (Test-Path $src) {
-            Copy-Item -Force $src -Destination (Join-Path $target $file)
+    Get-ChildItem -Path $srcDir -Force | ForEach-Object {
+        $name = $_.Name
+        if ($name -eq "__pycache__") {
+            return
         }
-    }
-
-    $srcResources = Join-Path $srcDir "resources"
-    if (Test-Path $srcResources) {
-        Copy-Item -Recurse -Force $srcResources -Destination (Join-Path $target "resources")
+        Copy-Item -Path $_.FullName -Destination (Join-Path $target $name) -Recurse -Force
     }
 
     $pycache = Join-Path $target "__pycache__"

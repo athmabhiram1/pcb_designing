@@ -1,5 +1,5 @@
 """
-Advanced Placement Engine v2.2 — Multi-Objective PCB Component Placement.
+Advanced Placement Engine v2.3 — Multi-Objective PCB Component Placement.
 
 Supports ONNX Runtime for RL inference with analytical (quadratic) and
 rule-based fallbacks. Full netlist integration with thermal simulation.
@@ -910,17 +910,28 @@ class PlacementEngine:
             return positions
 
         m = CONFIG.EDGE_MARGIN_MM
+        prev_max_temp = float("inf")
+        thermal_iters = 20
 
-        for _ in range(20):
+        for it in range(thermal_iters):
             thermal = ThermalModel(width, height)
             for comp in components:
                 if comp.ref not in positions:
                     continue
-                # NOTE: use deepcopy so shallow copy doesn't share pins list
                 tc = copy.deepcopy(comp)
                 tc.x, tc.y = positions[comp.ref][0], positions[comp.ref][1]
                 thermal.add_component(tc)
             thermal.solve_steady_state(10)
+
+            # Convergence check: if temperature delta < 0.1°C, stop early
+            cur_max_temp = thermal.max_temperature()
+            if abs(prev_max_temp - cur_max_temp) < 0.1:
+                logger.debug("Thermal converged at iteration %d (ΔT=%.3f°C)", it, abs(prev_max_temp - cur_max_temp))
+                break
+            prev_max_temp = cur_max_temp
+
+            # Force-decay: reduce repulsion strength as iterations progress
+            decay = 1.0 - 0.9 * (it / max(thermal_iters - 1, 1))
 
             for i, c1 in enumerate(hot_comps):
                 if c1.ref not in positions:
@@ -934,7 +945,7 @@ class PlacementEngine:
 
                     dist = math.hypot(x1 - x2, y1 - y2)
                     if 0 < dist < 20.0:
-                        step = 2.0 / dist
+                        step = 2.0 * decay / dist
                         dx, dy = (x1 - x2) * step, (y1 - y2) * step
                         positions[c1.ref] = (
                             max(m, min(width  - m, x1 + dx)),
@@ -993,13 +1004,14 @@ class PlacementEngine:
                 0.0,
             )
 
-        # Passives: rows flanking ICs
-        pcols = 8
+        # Passives: rows flanking ICs — wider 7mm grid for better readability
+        pcols = max(1, int((width - 2 * m - 60) / 7))  # auto-fit columns
+        pcols = max(4, min(pcols, 12))  # clamp to reasonable range
         for i, p in enumerate(passives):
             row, col = divmod(i, pcols)
             side = 1 if row % 2 == 0 else -1
-            x = width / 2 + side * (30 + (col % pcols) * 5)
-            y = m + row * 5
+            x = width / 2 + side * (25 + col * 7)
+            y = m + row * 7
             positions[p.ref] = (
                 max(m, min(width - m, x)),
                 max(m, min(height - m, y)),
@@ -1035,17 +1047,26 @@ class PlacementEngine:
         """
         Force-directed wirelength refinement.
 
-        Repulsive forces now use a SpatialIndex (O(n) avg per component) instead
-        of the original O(n²) all-pairs loop.
+        v2.3 improvements:
+          - Linear force-decay schedule (1.0 → 0.1) prevents oscillation
+          - Early termination when total displacement < ε for 3 iterations
+          - Repulsive forces use SpatialIndex (O(n) avg)
         """
         pos = {ref: list(p) for ref, p in positions.items()}
         m   = CONFIG.EDGE_MARGIN_MM
+        n_iter = CONFIG.REFINEMENT_ITERATIONS
 
         # Build spatial index for O(1) neighbour queries
         idx = SpatialIndex()
         idx.build({ref: (p[0], p[1], p[2]) for ref, p in pos.items()})
 
-        for _ in range(CONFIG.REFINEMENT_ITERATIONS):
+        stall_count = 0
+        stall_threshold = 0.05  # mm total displacement
+
+        for iteration in range(n_iter):
+            # Force decay: linearly reduce from 1.0 to 0.1 over iterations
+            decay = 1.0 - 0.9 * (iteration / max(n_iter - 1, 1))
+
             forces: Dict[str, List[float]] = {ref: [0.0, 0.0] for ref in pos}
 
             # Attractive: connected pairs
@@ -1059,7 +1080,7 @@ class PlacementEngine:
                     x2, y2 = pos[nref][0], pos[nref][1]
                     dist = math.hypot(x2 - x1, y2 - y1) or CONFIG.EPSILON
                     ideal = 10.0
-                    force = weight * (dist - ideal) / dist * 0.1
+                    force = weight * (dist - ideal) / dist * 0.1 * decay
                     forces[ref][0]  += (x2 - x1) * force
                     forces[ref][1]  += (y2 - y1) * force
 
@@ -1070,16 +1091,31 @@ class PlacementEngine:
                     if dist < CONFIG.EPSILON:
                         continue
                     x2, y2 = pos[other][0], pos[other][1]
-                    force = (15.0 - dist) / dist * 0.5
+                    force = (15.0 - dist) / dist * 0.5 * decay
                     fx = (x1 - x2) * force
                     fy = (y1 - y2) * force
                     forces[ref][0] += fx
                     forces[ref][1] += fy
 
-            # Apply and clamp
+            # Apply, clamp, and track total displacement
+            total_displacement = 0.0
             for ref in pos:
-                pos[ref][0] = max(m, min(width  - m, pos[ref][0] + forces[ref][0]))
-                pos[ref][1] = max(m, min(height - m, pos[ref][1] + forces[ref][1]))
+                dx = forces[ref][0]
+                dy = forces[ref][1]
+                new_x = max(m, min(width  - m, pos[ref][0] + dx))
+                new_y = max(m, min(height - m, pos[ref][1] + dy))
+                total_displacement += abs(new_x - pos[ref][0]) + abs(new_y - pos[ref][1])
+                pos[ref][0] = new_x
+                pos[ref][1] = new_y
+
+            # Early termination: stop if displacement stalls for 3 iterations
+            if total_displacement < stall_threshold:
+                stall_count += 1
+                if stall_count >= 3:
+                    logger.debug("Refinement converged at iteration %d (displacement=%.4f)", iteration, total_displacement)
+                    break
+            else:
+                stall_count = 0
 
             # Rebuild spatial index after moves
             idx.build({r: (p[0], p[1], p[2]) for r, p in pos.items()})
